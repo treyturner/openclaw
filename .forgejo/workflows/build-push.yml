@@ -1,0 +1,112 @@
+name: Build and push openclaw image (only when needed)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
+      - name: Resolve current upstream base digest
+        id: base
+        shell: bash -euo pipefail {0}
+        run: |
+          DIGEST="$(docker buildx imagetools inspect ghcr.io/openclaw/openclaw:latest --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "short=${DIGEST:7:12}" >> "$GITHUB_OUTPUT"
+
+          docker pull "ghcr.io/openclaw/openclaw@${DIGEST}"
+          VERSION="$(docker image inspect "ghcr.io/openclaw/openclaw@${DIGEST}" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' || true)"
+          VERSION="${VERSION//$'\r'/}"
+          SAFE_VERSION="${VERSION//[\/:@ ]/-}"
+          echo "version=${SAFE_VERSION:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Forgejo registry
+        run: |
+          echo "${{ secrets.FORGEJO_REGISTRY_TOKEN }}" | docker login forgejo.treyturner.info \
+            -u "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Check if image for this base digest already exists
+        id: exists
+        shell: bash -euo pipefail {0}
+        run: |
+          TAG="base-${{ steps.base.outputs.short }}"
+          if docker manifest inspect forgejo.treyturner.info/treyturner/openclaw:$TAG >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set metadata
+        if: steps.exists.outputs.exists == 'false'
+        id: meta
+        shell: bash -euo pipefail {0}
+        run: |
+          echo "date_tag=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "candidate=openclaw:candidate-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Build candidate image (single build, no push)
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          build-args: |
+            OPENCLAW_BASE=ghcr.io/openclaw/openclaw@${{ steps.base.outputs.digest }}
+          context: .
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.candidate }}
+          cache-from: type=registry,ref=forgejo.treyturner.info/treyturner/openclaw:buildcache
+          cache-to: type=registry,ref=forgejo.treyturner.info/treyturner/openclaw:buildcache,mode=max
+
+      - name: Smoke test candidate (Playwright + Chromium launch)
+        if: steps.exists.outputs.exists == 'false'
+        shell: bash -euo pipefail {0}
+        run: |
+          docker run --rm --entrypoint node "${{ steps.meta.outputs.candidate }}" -e "const { chromium } = require('playwright'); (async () => { const b = await chromium.launch({ headless: true, args: ['--no-sandbox','--disable-setuid-sandbox'] }); const p = await b.newPage(); await p.goto('https://example.com'); const t = await p.title(); console.log(t); await b.close(); if (t !== 'Example Domain') process.exit(2); })().catch(e => { console.error(e); process.exit(1); });"
+
+      - name: Tag and push tested image
+        if: steps.exists.outputs.exists == 'false'
+        shell: bash -euo pipefail {0}
+        run: |
+          IMG_BASE="forgejo.treyturner.info/treyturner/openclaw"
+          SRC="${{ steps.meta.outputs.candidate }}"
+          docker tag "$SRC" "$IMG_BASE:latest"
+          docker tag "$SRC" "$IMG_BASE:daily"
+          docker tag "$SRC" "$IMG_BASE:${{ steps.meta.outputs.date_tag }}"
+          docker tag "$SRC" "$IMG_BASE:${{ steps.meta.outputs.sha_tag }}"
+          docker tag "$SRC" "$IMG_BASE:base-${{ steps.base.outputs.short }}"
+          docker push "$IMG_BASE:latest"
+          docker push "$IMG_BASE:daily"
+          docker push "$IMG_BASE:${{ steps.meta.outputs.date_tag }}"
+          docker push "$IMG_BASE:${{ steps.meta.outputs.sha_tag }}"
+          docker push "$IMG_BASE:base-${{ steps.base.outputs.short }}"
+
+          if [ "${{ steps.base.outputs.version }}" != "unknown" ]; then
+            docker tag "$SRC" "$IMG_BASE:${{ steps.base.outputs.version }}"
+            docker push "$IMG_BASE:${{ steps.base.outputs.version }}"
+          fi
+
+      - name: No changes
+        if: steps.exists.outputs.exists == 'true'
+        run: echo "Base image unchanged; skipping build."
