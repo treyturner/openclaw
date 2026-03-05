@@ -42,4 +42,5 @@ RUN --mount=type=cache,target=/var/cache/ms-playwright,id=ms-playwright-cache \
 
 USER node
 
-RUN openclaw completion -i -s bash
+RUN openclaw completion --write-state \
+    && openclaw completion -i -s bash
