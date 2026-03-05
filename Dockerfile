@@ -40,6 +40,10 @@ RUN --mount=type=cache,target=/var/cache/ms-playwright,id=ms-playwright-cache \
     && cp -a /var/cache/ms-playwright/. "$PLAYWRIGHT_BROWSERS_PATH/" \
     && chown -R node:node "$PLAYWRIGHT_BROWSERS_PATH"
 
+RUN mkdir -p /app/config /home/node/.openclaw/config \
+    && ln -sf /home/node/.openclaw/config/mcporter.json /app/config/mcporter.json \
+    && chown -R node:node /home/node/.openclaw /app/config
+
 USER node
 
 RUN openclaw completion --write-state \
