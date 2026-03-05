@@ -90,7 +90,7 @@ jobs:
         if: steps.gate.outputs.should_build == 'true'
         shell: bash -euo pipefail {0}
         run: |
-          docker run --rm --entrypoint node "${{ steps.meta.outputs.candidate }}" -e "const { chromium } = require('/opt/pw/node_modules/playwright'); (async () => { const b = await chromium.launch({ headless: true, args: ['--no-sandbox','--disable-setuid-sandbox'] }); const p = await b.newPage(); await p.goto('https://example.com'); const t = await p.title(); console.log(t); await b.close(); if (t !== 'Example Domain') process.exit(2); })().catch(e => { console.error(e); process.exit(1); });"
+          docker run --rm --entrypoint node "${{ steps.meta.outputs.candidate }}" -e "const { chromium } = require('playwright-core'); (async () => { const b = await chromium.launch({ headless: true, args: ['--no-sandbox','--disable-setuid-sandbox'] }); const p = await b.newPage(); await p.goto('https://example.com'); const t = await p.title(); console.log(t); await b.close(); if (t !== 'Example Domain') process.exit(2); })().catch(e => { console.error(e); process.exit(1); });"
 
       - name: Tag and push tested image
         if: steps.gate.outputs.should_build == 'true'
