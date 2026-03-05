@@ -26,7 +26,8 @@ RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
     && rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \
-    mkdir -p /opt/pw \
+    npm i -g mcporter \
+    && mkdir -p /opt/pw \
     && cd /opt/pw \
     && npm init -y \
     && npm i playwright@${PLAYWRIGHT_VERSION} playwright-core@${PLAYWRIGHT_VERSION}
