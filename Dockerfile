@@ -5,8 +5,7 @@ ARG PLAYWRIGHT_VERSION=1.58
 
 USER root
 
-ENV HOME=/home/node \
-    PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
     TERM=xterm-256color
 
 RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
@@ -45,6 +44,8 @@ RUN mkdir -p /app/config /home/node/.openclaw/config \
     && chown -R node:node /home/node/.openclaw /app/config
 
 USER node
+
+ENV HOME=/home/node
 
 RUN openclaw completion --write-state \
     && openclaw completion -i -s bash
