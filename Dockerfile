@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
         openssh-client \
         python3-venv \
         rsync \
+        vim \
         yq \
     && rm -rf /var/lib/apt/lists/*
 
