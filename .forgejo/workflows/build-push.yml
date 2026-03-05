@@ -46,19 +46,26 @@ jobs:
             -u "${{ github.actor }}" \
             --password-stdin
 
-      # - name: Check if image for this base digest already exists
-      #   id: exists
-      #   shell: bash -euo pipefail {0}
-      #   run: |
-      #     TAG="base-${{ steps.base.outputs.short }}"
-      #     if docker manifest inspect forgejo.treyturner.info/treyturner/openclaw:$TAG >/dev/null 2>&1; then
-      #       echo "exists=true" >> "$GITHUB_OUTPUT"
-      #     else
-      #       echo "exists=false" >> "$GITHUB_OUTPUT"
-      #     fi
+      - name: Determine build necessity
+        id: gate
+        shell: bash -euo pipefail {0}
+        run: |
+          TAG="base-${{ steps.base.outputs.short }}"
+          if docker manifest inspect forgejo.treyturner.info/treyturner/openclaw:$TAG >/dev/null 2>&1; then
+            EXISTS=true
+          else
+            EXISTS=false
+          fi
+          echo "exists=$EXISTS" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$EXISTS" = "true" ]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set metadata
-        if: steps.exists.outputs.exists == 'false'
+        if: steps.gate.outputs.should_build == 'true'
         id: meta
         shell: bash -euo pipefail {0}
         run: |
@@ -67,7 +74,7 @@ jobs:
           echo "candidate=openclaw:candidate-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
       - name: Build candidate image (single build, no push)
-        if: steps.exists.outputs.exists == 'false'
+        if: steps.gate.outputs.should_build == 'true'
         uses: docker/build-push-action@v6
         with:
           build-args: |
@@ -80,13 +87,13 @@ jobs:
           cache-to: type=registry,ref=forgejo.treyturner.info/treyturner/openclaw:buildcache,mode=max
 
       - name: Smoke test candidate (Playwright + Chromium launch)
-        # if: steps.exists.outputs.exists == 'false'
+        if: steps.gate.outputs.should_build == 'true'
         shell: bash -euo pipefail {0}
         run: |
           docker run --rm --entrypoint node "${{ steps.meta.outputs.candidate }}" -e "const { chromium } = require('/opt/pw/node_modules/playwright'); (async () => { const b = await chromium.launch({ headless: true, args: ['--no-sandbox','--disable-setuid-sandbox'] }); const p = await b.newPage(); await p.goto('https://example.com'); const t = await p.title(); console.log(t); await b.close(); if (t !== 'Example Domain') process.exit(2); })().catch(e => { console.error(e); process.exit(1); });"
 
       - name: Tag and push tested image
-        # if: steps.exists.outputs.exists == 'false'
+        if: steps.gate.outputs.should_build == 'true'
         shell: bash -euo pipefail {0}
         run: |
           IMG_BASE="forgejo.treyturner.info/treyturner/openclaw"
@@ -107,6 +114,6 @@ jobs:
             docker push "$IMG_BASE:${{ steps.base.outputs.version }}"
           fi
 
-      # - name: No changes
-      #   if: steps.exists.outputs.exists == 'true'
-      #   run: echo "Base image unchanged; skipping build."
+      - name: No changes
+        if: steps.gate.outputs.should_build == 'false'
+        run: echo "Scheduled run found unchanged base digest; skipping build."
