@@ -58,6 +58,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
         uv pip install --python .venv/bin/python ${EXTRA_PIP_PKGS}; \
     fi
 
+# patch ticktick-sdk issue 7, fix pending in pr 29
+COPY patches/ticktick-repeat-from.patch /tmp/ticktick-repeat-from.patch
+RUN patch -p1 < /tmp/ticktick-repeat-from.patch
+
 # playwright-core browser install
 RUN --mount=type=cache,target=/pw-cache,id=pw-browsers \
     PLAYWRIGHT_BROWSERS_PATH=/pw-cache \

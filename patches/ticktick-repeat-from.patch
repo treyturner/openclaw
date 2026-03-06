@@ -1,0 +1,22 @@
+diff --git a/ticktick-mcp/.venv/lib/python3.11/site-packages/ticktick_sdk/models/task.py b/ticktick-mcp/.venv/lib/python3.11/site-packages/ticktick_sdk/models/task.py
+index 7d22466..abdee11 100644
+--- a/ticktick-mcp/.venv/lib/python3.11/site-packages/ticktick_sdk/models/task.py
++++ b/ticktick-mcp/.venv/lib/python3.11/site-packages/ticktick_sdk/models/task.py
+@@ -185,6 +185,17 @@ def parse_items(cls, v: Any) -> list[ChecklistItem]:
+             ]
+         return []
+
++    @field_validator("repeat_from", mode="before")
++    @classmethod
++    def parse_repeat_from(cls, v: Any) -> int | None:
++        if v is None or v == "":
++            return None
++        if isinstance(v, int):
++            return v
++        if isinstance(v, str):
++            return int(v)
++        return None
++
+     # Properties
+     @property
+     def is_completed(self) -> bool:
