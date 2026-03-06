@@ -1,5 +1,16 @@
-ARG OPENCLAW_BASE=ghcr.io/openclaw/openclaw:latest
-FROM ${OPENCLAW_BASE}
+# syntax=docker/dockerfile:1.7
+ARG BASE_REGISTRY=ghcr.io \
+    BASE_OWNER=openclaw \
+    BASE_REPO=openclaw \
+    BASE_TAG=latest
+
+FROM ${BASE_REGISTRY}/${BASE_OWNER}/${BASE_REPO}:${BASE_TAG}
+
+ARG EXTRA_APT_PKGS="" \
+    EXTRA_NPM_LOCAL_PKGS="" \
+    EXTRA_NPM_GLOBAL_PKGS="" \
+    EXTRA_PIP_PKGS=""
+
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 USER root
@@ -7,6 +18,7 @@ USER root
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
     TERM=xterm-256color
 
+# apt install
 RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
     --mount=type=cache,target=/var/cache/apt,id=apt-cache \
     apt-get update \
@@ -22,11 +34,31 @@ RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
         rsync \
         vim \
         yq \
+        ${EXTRA_APT_PKGS} \
     && rm -rf /var/lib/apt/lists/*
 
+# npm install
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \
-    npm i -g mcporter @playwright/mcp@0.0.68
+    npm i -g mcporter @playwright/mcp@0.0.68 ${EXTRA_NPM_GLOBAL_PKGS} \
+    && if [[ -n "${EXTRA_NPM_LOCAL_PKGS}" ]]; then \
+        npm i ${EXTRA_NPM_LOCAL_PKGS}; \
+    fi
 
+# install uv
+RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
+    curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -sf /root/.local/bin/uv /usr/local/bin/uv
+
+# install python deps via uv
+COPY ticktick-mcp/pyproject.toml ticktick-mcp/uv.lock /app/ticktick-mcp/
+RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
+    cd /app/ticktick-mcp \
+    && uv sync --frozen --no-dev \
+    && if [[ -n "${EXTRA_PIP_PKGS}" ]]; then \
+        uv pip install --python .venv/bin/python ${EXTRA_PIP_PKGS}; \
+    fi
+
+# playwright-core browser install
 RUN --mount=type=cache,target=/var/cache/ms-playwright,id=ms-playwright-cache \
     cd /app \
     && PLAYWRIGHT_BROWSERS_PATH=/var/cache/ms-playwright \
@@ -36,17 +68,22 @@ RUN --mount=type=cache,target=/var/cache/ms-playwright,id=ms-playwright-cache \
     && chown -R node:node "$PLAYWRIGHT_BROWSERS_PATH" \
     && find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name chrome -print -quit > /tmp/chrome_binary_path
 
+# mcporter install & configuration
 RUN mkdir -p /app/config /home/node/.openclaw/config \
     && ln -sf /home/node/.openclaw/config/mcporter.json /app/config/mcporter.json \
     && chown -R node:node /home/node/.openclaw /app/config \
     && mcporter config add playwright \
         --command /usr/local/bin/playwright-mcp \
         --arg --executable-path \
-        --arg "$(cat /tmp/chrome_binary_path)" \
+        --arg "$(cat /tmp/chrome_binary_path && rm -f /tmp/chrome_binary_path >/dev/null 2>&1)" \
         --arg --headless \
         --scope project \
-    && rm -f /tmp/chrome_binary_path
+    && mcporter config add ticktick \
+        --command /app/ticktick-mcp/.venv/bin/ticktick-sdk \
+        --arg server \
+        --scope project
 
+# switch to runtime user
 USER node
 
 ENV HOME=/home/node

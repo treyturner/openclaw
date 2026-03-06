@@ -2,10 +2,12 @@
 
 Custom OpenClaw image built on top of `ghcr.io/openclaw/openclaw` with:
 
-- Playwright (`playwright` + `playwright-core`)
-- Chromium browser preinstalled at image build time
-- Common utility packages for OpenClaw workflows
-- Bash completion installed for `openclaw`
+- MCPs installed and configured for use:
+    - Playwright ([`@playwright/mcp`](https://github.com/microsoft/playwright-mcp))
+    - TickTick ([`dev-mirzabicer/ticktick`](https://github.com/dev-mirzabicer/ticktick-sdk))
+- Chromium browser
+- Common util packages for OpenClaw workflows
+- `openclaw` Bash completion
 
 ## Build strategy
 
@@ -27,6 +29,23 @@ Schedule: every 6 hours + manual dispatch.
 - `YYYYMMDD`
 - `<short git sha>`
 - `base-<upstream-digest-short>`
+
+## Environment variables
+
+- TickTick
+    - `TICKTICK_CLIENT_ID`
+    - `TICKTICK_CLIENT_SECRET`
+    - `TICKTICK_USERNAME`
+    - `TICKTICK_PASSWORD`
+
+## Build args
+
+Extra packages can be baked into the image by adding them to a space-separated string set into the appropriate build-arg:
+
+- `EXTRA_APT_PKGS`
+- `EXTRA_NPM_GLOBAL_PKGS`
+- `EXTRA_NPM_LOCAL_PKGS`
+- `EXTRA_PIP_PKGS`
 
 ## Required Forgejo secret
 
