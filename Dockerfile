@@ -59,12 +59,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
     fi
 
 # playwright-core browser install
-RUN --mount=type=cache,target=/var/cache/ms-playwright,id=ms-playwright-cache \
-    cd /app \
-    && PLAYWRIGHT_BROWSERS_PATH=/var/cache/ms-playwright \
+RUN --mount=type=cache,target=/pw-cache,id=pw-browsers \
+    PLAYWRIGHT_BROWSERS_PATH=/pw-cache \
     /app/node_modules/.bin/playwright-core install --with-deps chromium \
     && mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
-    && cp -a /var/cache/ms-playwright/. "$PLAYWRIGHT_BROWSERS_PATH/" \
+    && rsync -a --delete /pw-cache/ "$PLAYWRIGHT_BROWSERS_PATH/" \
     && chown -R node:node "$PLAYWRIGHT_BROWSERS_PATH" \
     && find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name chrome -print -quit > /tmp/chrome_binary_path
 
