@@ -50,6 +50,13 @@ jobs:
             ghcr.io/treyturner/openclaw
             forgejo.treyturner.info/treyturner/openclaw
 
+      - name: Login to build cache (GitHub Container Registry)
+        uses: docker/login-action@c144859092e8e353f3e118b0b329679a62351c3e  # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+
       - name: Build candidate image
         if: steps.gate.outputs.should_build == 'true'
         uses: docker/build-push-action@eb6512707bea5740b2608f2a43ece7bc543cb75b  # v7.0.0
@@ -74,7 +81,6 @@ jobs:
         uses: ./.github/actions/publish
         with:
           candidate-ref: ${{ env.DOWNSTREAM_REGISTRY }}/${{ env.DOWNSTREAM_OWNER }}/${{ env.DOWNSTREAM_REPO }}:${{ steps.compute.outputs.candidate_tag }}
-          github-token: ${{ github.token }}
           forgejo-token: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
           refs: ${{ steps.compute.outputs.refs }}
 
