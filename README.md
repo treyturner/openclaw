@@ -18,12 +18,16 @@ Example `.env`:
 OPENCLAW_USER_BASE=/mnt/cache/appdata/openclaw
 
 # Gateway settings
-OPENCLAW_GATEWAY_PORT=18789
-OPENCLAW_BRIDGE_PORT=18790
 OPENCLAW_GATEWAY_BIND=lan
 
 # Auth token (generate once with `openssl rand -hex 32`)
 OPENCLAW_GATEWAY_TOKEN=
+
+# API keys
+ANTHROPIC_API_KEY=
+#BRAVE_API_KEY=
+#OPENAI_API_KEY=
+TAVILY_API_KEY=
 
 # TickTick
 ## All vars mandatory, see https://github.com/dev-mirzabicer/ticktick-sdk#the-two-api-problem
@@ -33,12 +37,8 @@ OPENCLAW_GATEWAY_TOKEN=
 TICKTICK_ACCESS_TOKEN=
 TICKTICK_CLIENT_ID=
 TICKTICK_CLIENT_SECRET=
-TICKTICK_USERNAME=
 TICKTICK_PASSWORD=
-
-# Other API keys
-BRAVE_API_KEY=
-OPENAI_API_KEY=
+TICKTICK_USERNAME=
 
 # Optional
 OPENCLAW_EXTRA_MOUNTS=
@@ -56,8 +56,10 @@ x-hardening: &hardening
 
 x-environment: &environment
   OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
   BRAVE_API_KEY: ${BRAVE_API_KEY}
   OPENAI_API_KEY: ${OPENAI_API_KEY}
+  TAVILY_API_KEY: ${TAVILY_API_KEY}
   TICKTICK_ACCESS_TOKEN: ${TICKTICK_ACCESS_TOKEN}
   TICKTICK_CLIENT_ID: ${TICKTICK_CLIENT_ID}
   TICKTICK_CLIENT_SECRET: ${TICKTICK_CLIENT_SECRET}
@@ -70,7 +72,7 @@ x-volumes: &volumes
 services:
   gateway:
     <<: *hardening
-    image: forgejo.treyturner.info/treyturner/openclaw
+    image: ghcr.io/treyturner/openclaw
     container_name: openclaw
     environment:
       <<: *environment
@@ -89,7 +91,7 @@ services:
 
   cli:
     <<: *hardening
-    image: forgejo.treyturner.info/treyturner/openclaw
+    image: ghcr.io/treyturner/openclaw
     profiles: ["cli"]
     container_name: openclaw_cli
     environment:
@@ -117,7 +119,7 @@ Workflow:
 4. Run smoke test (`playwright` launches chromium and loads `example.com`)
 5. Tag + push if test passes
 
-Schedule: every 6 hours + manual dispatch.
+Schedule: daily at 08:00 UTC + manual dispatch.
 
 ## Published tags
 
@@ -135,10 +137,6 @@ Extra packages can be baked into the image by adding them to space-separated str
 - `EXTRA_NPM_GLOBAL_PKGS`
 - `EXTRA_NPM_LOCAL_PKGS`
 - `EXTRA_PIP_PKGS`
-
-## Forgejo Actions requirements
-
-- `FORGEJO_REGISTRY_TOKEN`: a token with push access to the container registry
 
 ## Notes
 

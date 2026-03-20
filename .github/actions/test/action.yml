@@ -1,0 +1,17 @@
+name: Test
+description: Test an image for suitability
+
+inputs:
+  candidate-ref:
+    description: "Fully-qualified image ref to test (ie. `registry.example.com/owner/repo:tag`)"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "Smoke test: Playwright + Chromium launch"
+      shell: bash -euo pipefail {0}
+      env:
+        CANDIDATE_REF: ${{ inputs.candidate-ref }}
+      run: |
+        docker run --rm --entrypoint node "${CANDIDATE_REF}" -e "const { chromium } = require('playwright-core'); (async () => { const b = await chromium.launch({ headless: true, args: ['--no-sandbox','--disable-setuid-sandbox'] }); const p = await b.newPage(); await p.goto('https://example.com'); const t = await p.title(); console.log(t); await b.close(); if (t !== 'Example Domain') process.exit(2); })().catch(e => { console.error(e); process.exit(1); });"

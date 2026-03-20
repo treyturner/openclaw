@@ -1,0 +1,82 @@
+name: Compute image refs
+description: Compute all image tags by multiplying repos by tags
+
+inputs:
+  upstream-short-digest:
+    description: "Short (12 chars) SHA digest of the upstream image"
+    required: true
+  upstream-version:
+    description: "Version of the upstream image ref as pulled from the opencontainers label"
+    required: true
+  downstream-repos:
+    description: "Newline-separated list of fully-qualified Docker image repos (registry/owner/repo) that will receive every computed tag"
+    required: true
+
+outputs:
+  refs:
+    description: "The computed newline-separated list of fully qualified image refs"
+    value: ${{ steps.compute.outputs.refs }}
+  date_tag:
+    description: "The computed date tag"
+    value: ${{ steps.compute.outputs.date_tag }}
+  sha_tag:
+    description: "The short (12 chars.) computed downstream SHA digest"
+    value: ${{ steps.compute.outputs.sha_tag }}
+  candidate_tag:
+    description: "The singular tag used for the candidate image prior to acceptance"
+    value: ${{ steps.compute.outputs.candidate_tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute image refs
+      id: compute
+      shell: bash -euo pipefail {0}
+      env:
+        DOWNSTREAM_REPOS_RAW: ${{ inputs.downstream-repos }}
+        UPSTREAM_SHORT_DIGEST: ${{ inputs.upstream-short-digest }}
+        UPSTREAM_VERSION: ${{ inputs.upstream-version }}
+      run: |
+        DATE_TAG=$(date -u +%Y%m%d)
+        SHA_TAG=${GITHUB_SHA::12}
+
+        { echo "date_tag=${DATE_TAG}"
+          echo "sha_tag=${SHA_TAG}"
+          echo "candidate_tag=candidate-${SHA_TAG}"
+        } | tee -a "$GITHUB_OUTPUT"
+
+        REPOS=()
+        while IFS= read -r REPO; do
+          REPO="${REPO%$'\r'}"
+          [[ -n "$REPO" ]] || continue
+          REPOS+=("$REPO")
+        done <<< "$DOWNSTREAM_REPOS_RAW"
+
+        [[ ${#REPOS[@]} -gt 0 ]] || {
+          echo "No repos parsed from inputs.downstream-repos" >&2
+          exit 1
+        }
+
+        TAGS=(
+          "latest"
+          "daily"
+          "${DATE_TAG}"
+          "${SHA_TAG}"
+          "base-${UPSTREAM_SHORT_DIGEST}"
+        )
+
+        if [[ "${UPSTREAM_VERSION}" != "unknown" ]]; then
+          TAGS+=("${UPSTREAM_VERSION}")
+        fi
+
+        REFS=()
+        for REPO in "${REPOS[@]}"; do
+          for TAG in "${TAGS[@]}"; do
+            REFS+=("${REPO}:${TAG}")
+          done
+        done
+
+        { printf 'refs<<__OPENCLAW_REFS__\n'
+          printf '%s\n' "${REFS[@]}"
+          printf '__OPENCLAW_REFS__\n'
+        } | tee -a "$GITHUB_OUTPUT"

@@ -1,0 +1,83 @@
+name: Build and push openclaw image (only when needed)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      UPSTREAM_REGISTRY: ghcr.io
+      UPSTREAM_OWNER: openclaw
+      UPSTREAM_REPO: openclaw
+      UPSTREAM_TAG: latest
+      DOWNSTREAM_REGISTRY: ghcr.io
+      DOWNSTREAM_OWNER: treyturner
+      DOWNSTREAM_REPO: openclaw
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+
+      - name: Gate build
+        id: gate
+        uses: ./.github/actions/build/gate
+        with:
+          upstream-image-ref: ${{ env.UPSTREAM_REGISTRY }}/${{ env.UPSTREAM_OWNER }}/${{ env.UPSTREAM_REPO }}:${{ env.UPSTREAM_TAG }}
+          downstream-image-ref: ${{ env.DOWNSTREAM_REGISTRY }}/${{ env.DOWNSTREAM_OWNER }}/${{ env.DOWNSTREAM_REPO }}
+
+      - name: Compute image refs
+        id: compute
+        if: steps.gate.outputs.should_build == 'true'
+        uses: ./.github/actions/compute/image-refs
+        with:
+          upstream-short-digest: ${{ steps.gate.outputs.upstream_short_digest }}
+          upstream-version: ${{ steps.gate.outputs.upstream_version }}
+          downstream-repos: |
+            ghcr.io/treyturner/openclaw
+            forgejo.treyturner.info/treyturner/openclaw
+
+      - name: Build candidate image
+        if: steps.gate.outputs.should_build == 'true'
+        uses: docker/build-push-action@eb6512707bea5740b2608f2a43ece7bc543cb75b  # v7.0.0
+        with:
+          context: .
+          build-args: |
+            BASE_REF=${{ env.UPSTREAM_REGISTRY }}/${{ env.UPSTREAM_OWNER }}/${{ env.UPSTREAM_REPO }}@${{ steps.gate.outputs.upstream_digest }}
+          cache-from: type=registry,ref=${{ env.DOWNSTREAM_REGISTRY }}/${{ env.DOWNSTREAM_OWNER }}/${{ env.DOWNSTREAM_REPO }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOWNSTREAM_REGISTRY }}/${{ env.DOWNSTREAM_OWNER }}/${{ env.DOWNSTREAM_REPO }}:buildcache,mode=max
+          tags: ${{ env.DOWNSTREAM_REGISTRY }}/${{ env.DOWNSTREAM_OWNER }}/${{ env.DOWNSTREAM_REPO }}:${{ steps.compute.outputs.candidate_tag }}
+          load: true
+          push: false
+
+      - name: Smoke test candidate
+        if: steps.gate.outputs.should_build == 'true'
+        uses: ./.github/actions/test
+        with:
+          candidate-ref: ${{ env.DOWNSTREAM_REGISTRY }}/${{ env.DOWNSTREAM_OWNER }}/${{ env.DOWNSTREAM_REPO }}:${{ steps.compute.outputs.candidate_tag }}
+
+      - name: Tag and push image
+        if: steps.gate.outputs.should_build == 'true'
+        uses: ./.github/actions/publish
+        with:
+          candidate-ref: ${{ env.DOWNSTREAM_REGISTRY }}/${{ env.DOWNSTREAM_OWNER }}/${{ env.DOWNSTREAM_REPO }}:${{ steps.compute.outputs.candidate_tag }}
+          github-token: ${{ github.token }}
+          forgejo-token: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+          refs: ${{ steps.compute.outputs.refs }}
+
+      - name: No changes
+        if: steps.gate.outputs.should_build == 'false'
+        run: echo "Scheduled run found unchanged base digest; skipping build."

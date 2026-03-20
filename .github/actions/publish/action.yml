@@ -1,0 +1,64 @@
+name: Push
+description: Tag and push a Docker image to one or more registries
+
+inputs:
+  candidate-ref:
+    description: "Fully-qualified candidate image ref to tag and push"
+    required: true
+  dockerhub-username:
+    description: "DockerHub username"
+    required: false
+  dockerhub-password:
+    description: "DockerHub password or token"
+    required: false
+  github-token:
+    description: "GitHub token for ghcr.io"
+    required: false
+  forgejo-token:
+    description: "Forgejo registry token"
+    required: false
+  refs:
+    description: "Newline-separated list of fully-qualified image refs to tag and push"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Login to GitHub Container Registry
+      if: ${{ contains(inputs.refs, 'ghcr.io') }}
+      uses: docker/login-action@c144859092e8e353f3e118b0b329679a62351c3e  # v4.0.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ inputs.github-token }}
+
+    - name: Login to Forgejo Container Registry
+      if: ${{ contains(inputs.refs, 'forgejo.treyturner.info') && inputs.forgejo-token != '' }}
+      uses: docker/login-action@c144859092e8e353f3e118b0b329679a62351c3e  # v4.0.0
+      with:
+        registry: forgejo.treyturner.info
+        username: ${{ github.repository_owner }}
+        password: ${{ inputs.forgejo-token }}
+
+    - name: Login to DockerHub
+      if: ${{ contains(inputs.refs, 'docker.io') && inputs.dockerhub-username != '' && inputs.dockerhub-password != '' }}
+      uses: docker/login-action@c144859092e8e353f3e118b0b329679a62351c3e  # v4.0.0
+      with:
+        username: ${{ inputs.dockerhub-username }}
+        password: ${{ inputs.dockerhub-password }}
+
+    - name: Tag and push
+      shell: bash -euo pipefail {0}
+      env:
+        CANDIDATE_REF: ${{ inputs.candidate-ref }}
+        REFS_RAW: ${{ inputs.refs }}
+      run: |
+        echo "Tagging and pushing images..."
+        while IFS= read -r ref; do
+          if [[ -n "$ref" ]]; then
+            echo "Tagging ${CANDIDATE_REF} -> ${ref}"
+            docker tag "${CANDIDATE_REF}" "${ref}"
+            echo "Pushing ${ref}"
+            docker push "${ref}"
+          fi
+        done <<< "${REFS_RAW}"

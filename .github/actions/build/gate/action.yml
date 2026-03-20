@@ -1,0 +1,68 @@
+name: Build gate
+description: Compute whether a build will produce a new image
+
+inputs:
+  upstream-image-ref:
+    description: "Fully qualified upstream image ref (`registry.example.com/owner/repo:tag`)"
+    required: true
+  downstream-image-ref:
+    description: "TAGLESS downstream image ref (`registry.example.com/owner/repo`)"
+    required: true
+
+outputs:
+  upstream_digest:
+    description: "Full SHA digest of the upstream image ref"
+    value: ${{ steps.upstream.outputs.digest }}
+  upstream_short_digest:
+    description: "Short (first 12 chars) digest of the upstream image ref"
+    value: ${{ steps.upstream.outputs.short_digest }}
+  upstream_version:
+    description: "Version of the upstream image ref as pulled from the opencontainers label"
+    value: ${{ steps.upstream.outputs.version }}
+  downstream_exists:
+    description: "'true' if a downstream image for the upstream digest exists, 'false' otherwise"
+    value: ${{ steps.gate.outputs.downstream_exists }}
+  should_build:
+    description: "'true' if the build will produce a new image, 'false' otherwise"
+    value: ${{ steps.gate.outputs.should_build }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve current upstream base digest
+      id: upstream
+      shell: bash -euo pipefail {0}
+      env:
+        UPSTREAM_IMAGE_REF: ${{ inputs.upstream-image-ref }}
+      run: |
+        DIGEST="$(docker buildx imagetools inspect "${UPSTREAM_IMAGE_REF}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+        echo "digest=${DIGEST}" | tee -a "$GITHUB_OUTPUT"
+        echo "short_digest=${DIGEST:7:12}" | tee -a "$GITHUB_OUTPUT"
+
+        REPO="${UPSTREAM_IMAGE_REF%%:*}"
+        docker pull "${REPO}@${DIGEST}"
+        VERSION="$(docker image inspect "${REPO}@${DIGEST}" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' || true)"
+        VERSION="${VERSION//$'\r'/}"
+        SAFE_VERSION="${VERSION//[\/:@ ]/-}"
+        echo "version=${SAFE_VERSION:-unknown}" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Determine build necessity
+      id: gate
+      shell: bash -euo pipefail {0}
+      env:
+        DOWNSTREAM_REF: ${{ inputs.downstream-image-ref }}
+        SHORT_DIGEST: ${{ steps.upstream.outputs.short_digest }}
+      run: |
+        TAG="base-${SHORT_DIGEST}"
+        if docker manifest inspect "${DOWNSTREAM_REF}:${TAG}" >/dev/null 2>&1; then
+          EXISTS=true
+        else
+          EXISTS=false
+        fi
+        echo "downstream_exists=${EXISTS}" | tee -a "$GITHUB_OUTPUT"
+
+        if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] && [[ "$EXISTS" == "true" ]]; then
+          echo "should_build=false" | tee -a "$GITHUB_OUTPUT"
+        else
+          echo "should_build=true" | tee -a "$GITHUB_OUTPUT"
+        fi
