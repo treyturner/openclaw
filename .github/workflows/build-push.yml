@@ -3,6 +3,9 @@ name: Build and push openclaw image (only when needed)
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - .github/FUNDING.yml
+      - README.md
   schedule:
     - cron: "0 8 * * *"
   workflow_dispatch: {}

@@ -26,6 +26,7 @@ RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
     && apt-get install -y --no-install-recommends \
         bash \
         curl \
+        docker.io \
         ffmpeg \
         git \
         imagemagick \

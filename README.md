@@ -6,8 +6,19 @@ Custom OpenClaw image built on top of `ghcr.io/openclaw/openclaw` with:
     - Playwright ([`@playwright/mcp`](https://github.com/microsoft/playwright-mcp))
     - TickTick ([`dev-mirzabicer/ticktick`](https://github.com/dev-mirzabicer/ticktick-sdk))
 - Chromium browser
-- Common util packages for OpenClaw workflows
-- `openclaw` Bash completion
+- Commonly needed workflow utilities:
+  - bash with `openclaw` completion
+  - curl
+  - docker cli for sandboxing
+  - ffmpeg
+  - git
+  - imagemagick
+  - jq
+  - openssh-client
+  - python3-venv
+  - rsync
+  - vim
+  - yq
 
 ## Usage
 
