@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1.7
 ARG BASE_REGISTRY=ghcr.io \
     BASE_OWNER=openclaw \
-    BASE_REPO=openclaw \
-    BASE_TAG=latest
+    BASE_REPO=openclaw-sandbox \
+    BASE_TAG=bookworm-slim
+
 ARG BASE_REF=${BASE_REGISTRY}/${BASE_OWNER}/${BASE_REPO}:${BASE_TAG}
 
 FROM ${BASE_REF}
@@ -16,25 +17,25 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 USER root
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
-    TERM=xterm-256color
+ENV TERM=xterm-256color
 
 # apt install
-RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
-    --mount=type=cache,target=/var/cache/apt,id=apt-cache \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
+        ca-certificates \
+        coreutils \
         curl \
-        docker.io \
         ffmpeg \
         git \
         imagemagick \
         jq \
-        openssh-client \
+        nodejs \
+        python3 \
         python3-venv \
         rsync \
-        vim \
         yq \
         ${EXTRA_APT_PKGS} \
     && rm -rf /var/lib/apt/lists/*
@@ -64,14 +65,14 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
 COPY patches/ticktick-repeat-from.patch /tmp/ticktick-repeat-from.patch
 RUN patch -p1 < /tmp/ticktick-repeat-from.patch
 
-# playwright-core browser install
-RUN --mount=type=cache,target=/pw-cache,id=pw-browsers \
-    PLAYWRIGHT_BROWSERS_PATH=/pw-cache \
-    /app/node_modules/.bin/playwright-core install --with-deps chromium \
-    && mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
-    && rsync -a --delete /pw-cache/ "$PLAYWRIGHT_BROWSERS_PATH/" \
-    && chown -R node:node "$PLAYWRIGHT_BROWSERS_PATH" \
-    && find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name chrome -print -quit > /tmp/chrome_binary_path
+# # playwright-core browser install - trying included sandbox browser first
+# RUN --mount=type=cache,target=/pw-cache,id=pw-browsers \
+#     PLAYWRIGHT_BROWSERS_PATH=/pw-cache \
+#     /app/node_modules/.bin/playwright-core install --with-deps chromium \
+#     && mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
+#     && rsync -a --delete /pw-cache/ "$PLAYWRIGHT_BROWSERS_PATH/" \
+#     && chown -R node:node "$PLAYWRIGHT_BROWSERS_PATH" \
+#     && find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name chrome -print -quit > /tmp/chrome_binary_path
 
 # mcporter install & configuration
 RUN mkdir -p /app/config /home/node/.openclaw/config \
