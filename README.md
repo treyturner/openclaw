@@ -1,6 +1,8 @@
 # treyturner/openclaw
 
-Custom OpenClaw image built on top of `ghcr.io/openclaw/openclaw` with:
+Custom OpenClaw gateway and sandbox images. The gateway extends
+`ghcr.io/openclaw/openclaw`; the sandbox extends the official
+`docker.io/library/node:26-bookworm-slim` image. Together they provide:
 
 - MCPs installed and configured for use:
     - Playwright ([`@playwright/mcp`](https://github.com/microsoft/playwright-mcp))
@@ -19,6 +21,11 @@ Custom OpenClaw image built on top of `ghcr.io/openclaw/openclaw` with:
   - rsync
   - vim
   - yq
+
+The sandbox runs as `sandbox` (UID/GID 1000), with `HOME=/home/sandbox` and
+`/workspace` as its working directory. Tool installation and patching run from
+`/app` during the build. Its default command is `sleep infinity`; OpenClaw manages tool
+execution inside the running container. The OpenClaw CLI belongs to the gateway.
 
 ## Usage
 

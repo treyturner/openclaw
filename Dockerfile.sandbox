@@ -1,23 +1,43 @@
 # syntax=docker/dockerfile:1.7
-ARG BASE_REGISTRY=ghcr.io \
-    BASE_OWNER=openclaw \
-    BASE_REPO=openclaw-sandbox \
-    BASE_TAG=bookworm-slim
+ARG BASE_REGISTRY=docker.io \
+    BASE_OWNER=library \
+    BASE_REPO=node \
+    BASE_TAG=26-bookworm-slim
 
 ARG BASE_REF=${BASE_REGISTRY}/${BASE_OWNER}/${BASE_REPO}:${BASE_TAG}
 
-FROM ${BASE_REF}
+FROM ${BASE_REF} AS sandbox-base
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+USER root
+
+# Keep the Node image's UID/GID 1000 while giving the sandbox its own account.
+RUN groupmod --new-name sandbox node \
+    && usermod --login sandbox --home /home/sandbox --move-home node \
+    && install -d -o sandbox -g sandbox /workspace
+
+ENV HOME=/home/sandbox \
+    TERM=xterm-256color
+
+USER sandbox
+WORKDIR /workspace
+
+ENTRYPOINT []
+CMD ["sleep", "infinity"]
+
+FROM sandbox-base AS sandbox
 
 ARG EXTRA_APT_PKGS="" \
     EXTRA_NPM_LOCAL_PKGS="" \
     EXTRA_NPM_GLOBAL_PKGS="" \
     EXTRA_PIP_PKGS=""
 
-SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
-
 USER root
 
-ENV TERM=xterm-256color
+ENV HOME=/root
+
+WORKDIR /app
 
 # apt install
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -32,9 +52,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         git \
         imagemagick \
         jq \
-        nodejs \
+        patch \
         python3 \
         python3-venv \
+        ripgrep \
         rsync \
         yq \
         ${EXTRA_APT_PKGS} \
@@ -71,13 +92,13 @@ RUN patch -p1 < /tmp/ticktick-repeat-from.patch
 #     /app/node_modules/.bin/playwright-core install --with-deps chromium \
 #     && mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
 #     && rsync -a --delete /pw-cache/ "$PLAYWRIGHT_BROWSERS_PATH/" \
-#     && chown -R node:node "$PLAYWRIGHT_BROWSERS_PATH" \
+#     && chown -R sandbox:sandbox "$PLAYWRIGHT_BROWSERS_PATH" \
 #     && find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name chrome -print -quit > /tmp/chrome_binary_path
 
 # mcporter install & configuration
-RUN mkdir -p /app/config /home/node/.openclaw/config \
-    && ln -sf /home/node/.openclaw/config/mcporter.json /app/config/mcporter.json \
-    && chown -R node:node /home/node/.openclaw /app/config \
+RUN mkdir -p /app/config /home/sandbox/.openclaw/config \
+    && ln -sf /home/sandbox/.openclaw/config/mcporter.json /app/config/mcporter.json \
+    && chown -R sandbox:sandbox /home/sandbox/.openclaw /app/config \
     && mcporter config add playwright \
         --command /usr/local/bin/playwright-mcp \
         --arg --executable-path \
@@ -90,9 +111,8 @@ RUN mkdir -p /app/config /home/node/.openclaw/config \
         --scope project
 
 # switch to runtime user
-USER node
+USER sandbox
 
-ENV HOME=/home/node
+ENV HOME=/home/sandbox
 
-RUN openclaw completion --write-state \
-    && openclaw completion -i -s bash
+WORKDIR /workspace
