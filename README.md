@@ -121,18 +121,23 @@ networks:
 
 ## Build strategy
 
-This repo builds and publishes only when the upstream base image digest changes.
+This repo builds and publishes a gateway and sandbox image pair. Scheduled runs
+skip the pair when both upstream base digests already have published downstream
+images. Pushes to `main` and manual dispatches rebuild the pair regardless.
 
 Workflow:
-1. Check digest of `ghcr.io/openclaw/openclaw:latest`
-2. Skip if image tag `base-<digest-short>` already exists
-3. Build candidate image (single build, local load)
-4. Run smoke test (`playwright` launches chromium and loads `example.com`)
-5. Tag + push if test passes
+1. Resolve each image's upstream base digest independently
+2. On scheduled runs, rebuild the pair if either downstream `base-<digest-short>` tag is missing
+3. Build `Dockerfile.gateway` and `Dockerfile.sandbox` with their resolved bases and separate registry caches, loading both candidates locally
+4. Run the existing Playwright/Chromium smoke test against each candidate
+5. Tag + push both candidates only after both builds and tests pass
 
 Schedule: daily at 08:00 UTC + manual dispatch.
 
 ## Published tags
+
+Both `ghcr.io/treyturner/openclaw` (gateway) and
+`ghcr.io/treyturner/openclaw-sandbox` (sandbox), plus their Forgejo mirrors, receive:
 
 - `latest`
 - `daily`
