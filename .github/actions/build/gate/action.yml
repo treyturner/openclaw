@@ -41,7 +41,7 @@ runs:
 
         REPO="${UPSTREAM_IMAGE_REF%%:*}"
         docker pull "${REPO}@${DIGEST}"
-        VERSION="$(docker image inspect "${REPO}@${DIGEST}" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' || true)"
+        VERSION="$(docker image inspect "${REPO}@${DIGEST}" --format '{{ with index .Config.Labels "org.opencontainers.image.version" }}{{ . }}{{ end }}' || true)"
         VERSION="${VERSION//$'\r'/}"
         SAFE_VERSION="${VERSION//[\/:@ ]/-}"
         echo "version=${SAFE_VERSION:-unknown}" | tee -a "$GITHUB_OUTPUT"
