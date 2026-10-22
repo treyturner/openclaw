@@ -1,0 +1,57 @@
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "port": 18789,
+    "auth": {
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    },
+    "controlUi": {
+      "allowedOrigins": ["${OPENCLAW_CONTROL_UI_ORIGIN}"]
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "${OPENCLAW_WORKSPACE_DIR}",
+      "sandbox": {
+        "mode": "all",
+        "backend": "docker",
+        "scope": "agent",
+        "workspaceAccess": "rw",
+        "workspaceRoot": "${OPENCLAW_STATE_DIR}/sandboxes",
+        "docker": {
+          "image": "${OPENCLAW_SANDBOX_IMAGE}",
+          "containerPrefix": "openclaw-sbx-",
+          "workdir": "/workspace",
+          "readOnlyRoot": true,
+          "tmpfs": ["/tmp", "/var/tmp", "/run"],
+          "network": "bridge",
+          "user": "1000:1000",
+          "capDrop": ["ALL"],
+          "pidsLimit": 512,
+          "memory": "1g",
+          "cpus": 2,
+          "env": {
+            "LANG": "C.UTF-8"
+          }
+        },
+        "browser": {
+          "enabled": false
+        }
+      }
+    }
+  },
+  "browser": {
+    "enabled": false
+  },
+  "tools": {
+    "profile": "coding",
+    "exec": {
+      "host": "sandbox"
+    },
+    "elevated": {
+      "enabled": false
+    }
+  }
+}

@@ -1,0 +1,69 @@
+x-runtime: &runtime
+  image: ${OPENCLAW_GATEWAY_IMAGE:-ghcr.io/treyturner/openclaw:latest}
+  user: "1000:1000"
+  group_add:
+    - "${DOCKER_GID:?Set DOCKER_GID to the Docker socket group ID}"
+  init: true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=1g
+    - /run:rw,nosuid,nodev,size=64m
+  pids_limit: 512
+  environment: &environment
+    HOME: /home/node
+    OPENCLAW_STATE_DIR: ${OPENCLAW_USER_BASE:?Set OPENCLAW_USER_BASE to an absolute host path}/config
+    OPENCLAW_CONFIG_PATH: ${OPENCLAW_USER_BASE}/config/openclaw.json
+    OPENCLAW_WORKSPACE_DIR: ${OPENCLAW_USER_BASE}/workspace
+    OPENCLAW_SANDBOX_IMAGE: ${OPENCLAW_SANDBOX_IMAGE:-ghcr.io/treyturner/openclaw-sandbox:latest}
+    OPENCLAW_CONTROL_UI_ORIGIN: ${OPENCLAW_CONTROL_UI_ORIGIN:-http://127.0.0.1:18789}
+    XDG_CONFIG_HOME: ${OPENCLAW_USER_BASE}/xdg/config
+    XDG_DATA_HOME: ${OPENCLAW_USER_BASE}/xdg/data
+    XDG_STATE_HOME: ${OPENCLAW_USER_BASE}/xdg/state
+    XDG_CACHE_HOME: /tmp/.cache
+    OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?Set OPENCLAW_GATEWAY_TOKEN}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+    TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    TICKTICK_API_TOKEN: ${TICKTICK_API_TOKEN:-}
+  volumes:
+    # Docker resolves sandbox bind sources on the host, so preserve this path.
+    - type: bind
+      source: ${OPENCLAW_USER_BASE}
+      target: ${OPENCLAW_USER_BASE}
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${DOCKER_SOCKET:-/var/run/docker.sock}
+      target: /var/run/docker.sock
+      bind:
+        create_host_path: false
+  entrypoint: ["openclaw"]
+
+services:
+  gateway:
+    <<: *runtime
+    restart: unless-stopped
+    ports:
+      - "${OPENCLAW_PUBLISH_HOST:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+    command: ["gateway", "--bind", "lan", "--port", "18789"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:18789/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  cli:
+    <<: *runtime
+    profiles: ["cli"]
+    network_mode: service:gateway
+    pid: service:gateway
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      <<: *environment
+      BROWSER: echo
+    stdin_open: true
+    tty: true
+    command: ["--help"]
