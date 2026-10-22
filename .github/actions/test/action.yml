@@ -1,17 +1,21 @@
 name: Test
-description: Test an image for suitability
+description: Test a gateway or sandbox candidate before publication
 
 inputs:
   candidate-ref:
     description: "Fully-qualified image ref to test (ie. `registry.example.com/owner/repo:tag`)"
     required: true
+  role:
+    description: "Image role: gateway or sandbox"
+    required: true
 
 runs:
   using: composite
   steps:
-    - name: "Smoke test: Playwright + Chromium launch"
+    - name: Smoke test image role
       shell: bash -euo pipefail {0}
       env:
         CANDIDATE_REF: ${{ inputs.candidate-ref }}
+        IMAGE_ROLE: ${{ inputs.role }}
       run: |
-        docker run --rm --entrypoint node "${CANDIDATE_REF}" -e "const { chromium } = require('playwright-core'); (async () => { const b = await chromium.launch({ headless: true, args: ['--no-sandbox','--disable-setuid-sandbox'] }); const p = await b.newPage(); await p.goto('https://example.com'); const t = await p.title(); console.log(t); await b.close(); if (t !== 'Example Domain') process.exit(2); })().catch(e => { console.error(e); process.exit(1); });"
+        bash "$GITHUB_ACTION_PATH/../../../tests/image-smoke.sh" "$IMAGE_ROLE" "$CANDIDATE_REF"

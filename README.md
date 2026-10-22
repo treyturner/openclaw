@@ -179,16 +179,6 @@ UID 1000 so `mcporter/credentials.json` survives container replacement, and use
 [mcporter's configuration guide](https://github.com/openclaw/mcporter/blob/v0.16.0/docs/config.md)
 for OAuth setup and persistence. Browser auto-launch is disabled in both images.
 
-Run the focused configuration and authentication checks against local images:
-
-```sh
-bash tests/mcporter-config.sh <gateway-image> <sandbox-image>
-```
-
-These checks use local fixtures and require no account credentials or external
-network. They cover home mounts, working-directory changes, explicit overrides,
-bearer headers, and browser navigation and screenshots through mcporter.
-
 ## Build strategy
 
 This repo builds and publishes a gateway and sandbox image pair. Scheduled runs
@@ -199,10 +189,25 @@ Workflow:
 1. Resolve each image's upstream base digest independently
 2. On scheduled runs, rebuild the pair if either downstream `base-<digest-short>` tag is missing
 3. Build `Dockerfile.gateway` and `Dockerfile.sandbox` with their resolved bases and separate registry caches, loading both candidates locally
-4. Run the existing Playwright/Chromium smoke test against each candidate
+4. Test gateway startup and health, sandbox browser operation through the configured Playwright MCP, and both images' runtime tools and MCP configuration
 5. Tag + push both candidates only after both builds and tests pass
 
 Schedule: daily at 08:00 UTC + manual dispatch.
+
+Run the same smoke tests locally before publishing:
+
+```sh
+bash tests/image-smoke.sh gateway <gateway-image>
+bash tests/image-smoke.sh sandbox <sandbox-image>
+```
+
+Tests run as each image's default user with a read-only root filesystem, empty
+mounted home and workspace directories, and no external network, Docker socket,
+or account credentials. Local fixtures cover MCP configuration discovery,
+explicit overrides, and bearer authentication. The gateway must start and
+respond to `/healthz`; the sandbox must navigate and save a screenshot through
+its configured Playwright MCP. Both must run Node, npm, Python, and uv from a
+login shell. A failure in either candidate prevents publication of both images.
 
 ## Published tags
 
