@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "/usr/local/bin/playwright-mcp",
+      "args": [
+        "--executable-path",
+        "/usr/local/bin/chromium",
+        "--headless",
+        "--no-sandbox",
+        "--isolated",
+        "--output-dir",
+        "/workspace/.playwright-mcp"
+      ],
+      "cwd": "/workspace"
+    },
+    "ticktick": {
+      "baseUrl": "https://mcp.ticktick.com",
+      "headers": {
+        "Authorization": "Bearer ${TICKTICK_API_TOKEN}"
+      }
+    }
+  },
+  "imports": []
+}
