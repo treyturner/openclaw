@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
-ARG BASE_REGISTRY=docker.io \
-    BASE_OWNER=library \
-    BASE_REPO=node \
-    BASE_TAG=26-bookworm-slim
+ARG BASE_REGISTRY=ghcr.io \
+    BASE_OWNER=jdx \
+    BASE_REPO=mise \
+    BASE_TAG=2026.10.17-debian
 
 ARG BASE_REF=${BASE_REGISTRY}/${BASE_OWNER}/${BASE_REPO}:${BASE_TAG}
 
@@ -12,13 +12,31 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 USER root
 
-# Keep the Node image's UID/GID 1000 while giving the sandbox its own account.
-RUN groupmod --new-name sandbox node \
-    && usermod --login sandbox --home /home/sandbox --move-home node \
+# Match OpenClaw's default sandbox UID/GID.
+RUN groupadd --gid 1000 sandbox \
+    && useradd --uid 1000 --gid sandbox --create-home --shell /bin/bash sandbox \
     && install -d -o sandbox -g sandbox /workspace
 
 ENV HOME=/home/sandbox \
-    TERM=xterm-256color
+    TERM=xterm-256color \
+    MISE_CACHE_DIR=/tmp/.cache/mise \
+    MISE_STATE_DIR=/tmp/.local/state/mise \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Global tool versions live outside HOME and the mounted workspace. Symlinks
+# expose the locked binaries without mise shims or shell activation at runtime.
+# Link npm's CLI directly to avoid mise's wrapper that refreshes shims.
+COPY --chmod=0644 sandbox/mise.toml /mise/config.toml
+COPY --chmod=0644 sandbox/mise.lock /mise/mise.lock
+RUN --mount=type=cache,target=/tmp/.cache/mise,id=mise-cache,sharing=locked \
+    mise install --locked \
+    && for tool in node npx uv uvx; do \
+        ln -s "$(mise which "$tool")" "/usr/local/bin/$tool"; \
+    done \
+    && ln -s "$(mise where node)/lib/node_modules/npm/bin/npm-cli.js" /usr/local/bin/npm \
+    && node --version \
+    && npm --version \
+    && uv --version
 
 USER sandbox
 WORKDIR /workspace
@@ -35,7 +53,9 @@ ARG EXTRA_APT_PKGS="" \
 
 USER root
 
-ENV HOME=/root
+ENV HOME=/root \
+    NPM_CONFIG_PREFIX=/usr/local \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
 
 WORKDIR /app
 
@@ -52,7 +72,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         git \
         imagemagick \
         jq \
-        patch \
         python3 \
         python3-venv \
         ripgrep \
@@ -63,37 +82,34 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # npm install
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \
-    npm i -g mcporter @playwright/mcp@0.0.68 ${EXTRA_NPM_GLOBAL_PKGS} \
+    npm i -g mcporter @playwright/mcp@0.0.83 ${EXTRA_NPM_GLOBAL_PKGS} \
     && if [[ -n "${EXTRA_NPM_LOCAL_PKGS}" ]]; then \
         npm i ${EXTRA_NPM_LOCAL_PKGS}; \
     fi
 
-# install uv
-RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
-    curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && ln -sf /root/.local/bin/uv /usr/local/bin/uv
+# install the Chromium revision required by the installed Playwright MCP
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/pw-cache,id=pw-browsers,sharing=locked \
+    playwright_dir="$(node -p 'require("path").dirname(require.resolve("playwright/package.json", { paths: [process.argv[1]] }))' "$(npm root -g)/@playwright/mcp")" \
+    && PLAYWRIGHT_BROWSERS_PATH=/pw-cache \
+        node "$playwright_dir/cli.js" install --with-deps --no-shell chromium \
+    && mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
+    && rsync -a --delete /pw-cache/ "$PLAYWRIGHT_BROWSERS_PATH/" \
+    && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
+    && ln -sf "$(node -e 'console.log(require(process.argv[1]).chromium.executablePath())' "$playwright_dir")" \
+        /usr/local/bin/chromium \
+    && test -x /usr/local/bin/chromium \
+    && rm -rf /var/lib/apt/lists/*
 
-# install python deps via uv
-COPY ticktick-mcp/pyproject.toml ticktick-mcp/uv.lock /app/ticktick-mcp/
+# install optional Python tools independently of MCP servers
+ENV PATH=/opt/python/bin:${PATH}
 RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
-    cd /app/ticktick-mcp \
-    && uv sync --frozen --no-dev \
+    uv venv --python /usr/bin/python3 /opt/python \
+    && printf '%s\n' 'export PATH="/opt/python/bin:$PATH"' > /etc/profile.d/python-tools.sh \
     && if [[ -n "${EXTRA_PIP_PKGS}" ]]; then \
-        uv pip install --python .venv/bin/python ${EXTRA_PIP_PKGS}; \
+        uv pip install --python /opt/python/bin/python ${EXTRA_PIP_PKGS}; \
     fi
-
-# patch ticktick-sdk issue 7, fix pending in pr 29
-COPY patches/ticktick-repeat-from.patch /tmp/ticktick-repeat-from.patch
-RUN patch -p1 < /tmp/ticktick-repeat-from.patch
-
-# # playwright-core browser install - trying included sandbox browser first
-# RUN --mount=type=cache,target=/pw-cache,id=pw-browsers \
-#     PLAYWRIGHT_BROWSERS_PATH=/pw-cache \
-#     /app/node_modules/.bin/playwright-core install --with-deps chromium \
-#     && mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
-#     && rsync -a --delete /pw-cache/ "$PLAYWRIGHT_BROWSERS_PATH/" \
-#     && chown -R sandbox:sandbox "$PLAYWRIGHT_BROWSERS_PATH" \
-#     && find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name chrome -print -quit > /tmp/chrome_binary_path
 
 # mcporter install & configuration
 RUN mkdir -p /app/config /home/sandbox/.openclaw/config \
@@ -102,17 +118,20 @@ RUN mkdir -p /app/config /home/sandbox/.openclaw/config \
     && mcporter config add playwright \
         --command /usr/local/bin/playwright-mcp \
         --arg --executable-path \
-        --arg "$(cat /tmp/chrome_binary_path && rm -f /tmp/chrome_binary_path >/dev/null 2>&1)" \
+        --arg /usr/local/bin/chromium \
         --arg --headless \
+        --arg --no-sandbox \
+        --arg --isolated \
+        --arg --output-dir \
+        --arg /workspace/.playwright-mcp \
         --scope project \
-    && mcporter config add ticktick \
-        --command /app/ticktick-mcp/.venv/bin/ticktick-sdk \
-        --arg server \
+    && mcporter config add ticktick https://mcp.ticktick.com \
         --scope project
 
 # switch to runtime user
 USER sandbox
 
-ENV HOME=/home/sandbox
+ENV HOME=/home/sandbox \
+    XDG_CACHE_HOME=/tmp/.cache
 
 WORKDIR /workspace

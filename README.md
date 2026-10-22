@@ -1,13 +1,14 @@
 # treyturner/openclaw
 
 Custom OpenClaw gateway and sandbox images. The gateway extends
-`ghcr.io/openclaw/openclaw`; the sandbox extends the official
-`docker.io/library/node:26-bookworm-slim` image. Together they provide:
+`ghcr.io/openclaw/openclaw`; the sandbox extends
+`ghcr.io/jdx/mise:2026.10.17-debian` (Debian 13/Trixie), with Node 26 and uv
+installed by mise during the build. Together they provide:
 
 - MCPs installed and configured for use:
-    - Playwright ([`@playwright/mcp`](https://github.com/microsoft/playwright-mcp))
-    - TickTick ([`dev-mirzabicer/ticktick`](https://github.com/dev-mirzabicer/ticktick-sdk))
-- Chromium browser
+    - Playwright in the sandbox ([`@playwright/mcp`](https://github.com/microsoft/playwright-mcp))
+    - TickTick via its [official remote MCP service](https://help.ticktick.com/articles/7438129581631995904)
+- Chromium in the sandbox, installed by the matching Playwright version
 - Commonly needed workflow utilities:
   - bash with `openclaw` completion
   - curl
@@ -23,9 +24,33 @@ Custom OpenClaw gateway and sandbox images. The gateway extends
   - yq
 
 The sandbox runs as `sandbox` (UID/GID 1000), with `HOME=/home/sandbox` and
-`/workspace` as its working directory. Tool installation and patching run from
+`/workspace` as its working directory. Additional package installation runs from
 `/app` during the build. Its default command is `sleep infinity`; OpenClaw manages tool
 execution inside the running container. The OpenClaw CLI belongs to the gateway.
+
+The sandbox's tool versions are declared in `sandbox/mise.toml` and resolved in
+`sandbox/mise.lock`, including download checksums for Linux x64 and ARM64. Builds
+use `mise install --locked`. Tools live under `/mise`, outside the user's home
+and workspace, with direct links in `/usr/local/bin` so commands work without
+shell activation or runtime downloads. The gateway keeps upstream OpenClaw's
+Node runtime.
+
+To update sandbox tools, edit `sandbox/mise.toml` as needed, then regenerate the
+lockfile with mise 2026.10.17 or later and review the resulting versions:
+
+```sh
+mise -C sandbox lock --bump --platform linux-x64,linux-arm64
+```
+
+Playwright MCP uses `/usr/local/bin/chromium` and runs headless with an isolated
+profile. Its default output directory is `/workspace/.playwright-mcp`; explicit
+relative filenames resolve from `/workspace`. Browser binaries live outside the
+user's home directory and are readable by the sandbox user. Runtime caches use
+`/tmp/.cache` so they work with a read-only root filesystem.
+
+TickTick connects to `https://mcp.ticktick.com` over Streamable HTTP. Authenticate
+at runtime using OAuth or an API token as described in the official guide;
+credentials are not baked into either image.
 
 ## Usage
 
@@ -47,17 +72,6 @@ ANTHROPIC_API_KEY=
 #OPENAI_API_KEY=
 TAVILY_API_KEY=
 
-# TickTick
-## All vars mandatory, see https://github.com/dev-mirzabicer/ticktick-sdk#the-two-api-problem
-## see https://developer.ticktick.com/manage to create your client ID/secret. Set an OAuth
-## redirect URL of http://127.0.0.1:8080/callback
-## Access token is retrieved via `ticktick-sdk auth` and is good for 180 days
-TICKTICK_ACCESS_TOKEN=
-TICKTICK_CLIENT_ID=
-TICKTICK_CLIENT_SECRET=
-TICKTICK_PASSWORD=
-TICKTICK_USERNAME=
-
 # Optional
 OPENCLAW_EXTRA_MOUNTS=
 ```
@@ -78,11 +92,6 @@ x-environment: &environment
   BRAVE_API_KEY: ${BRAVE_API_KEY}
   OPENAI_API_KEY: ${OPENAI_API_KEY}
   TAVILY_API_KEY: ${TAVILY_API_KEY}
-  TICKTICK_ACCESS_TOKEN: ${TICKTICK_ACCESS_TOKEN}
-  TICKTICK_CLIENT_ID: ${TICKTICK_CLIENT_ID}
-  TICKTICK_CLIENT_SECRET: ${TICKTICK_CLIENT_SECRET}
-  TICKTICK_PASSWORD: ${TICKTICK_PASSWORD}
-  TICKTICK_USERNAME: ${TICKTICK_USERNAME}
 
 x-volumes: &volumes
   - ${OPENCLAW_USER_BASE}/config:/home/node/.openclaw
@@ -160,6 +169,9 @@ Extra packages can be baked into the image by adding them to space-separated str
 - `EXTRA_NPM_GLOBAL_PKGS`
 - `EXTRA_NPM_LOCAL_PKGS`
 - `EXTRA_PIP_PKGS`
+
+Python extras are installed into `/opt/python`, whose `bin` directory is on
+`PATH` for the runtime user. The `uv` and `uvx` commands are installed globally.
 
 ## Notes
 
