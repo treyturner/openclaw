@@ -119,15 +119,19 @@ jobs:
 
       - name: Smoke test gateway candidate
         if: steps.pair.outputs.should_build == 'true'
+        timeout-minutes: 10
         uses: ./.github/actions/test
         with:
           candidate-ref: ${{ env.GATEWAY_DOWNSTREAM_REF }}:${{ steps.gateway_refs.outputs.candidate_tag }}
+          role: gateway
 
       - name: Smoke test sandbox candidate
         if: steps.pair.outputs.should_build == 'true'
+        timeout-minutes: 10
         uses: ./.github/actions/test
         with:
           candidate-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
+          role: sandbox
 
       - name: Tag and push gateway image
         if: steps.pair.outputs.should_build == 'true'

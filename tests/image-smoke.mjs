@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
+
+// Bound failures in MCP startup, browser launch, and gateway shutdown as well as
+// individual commands. Exiting PID 1's child ends the container and its workers.
+setTimeout(() => {
+  console.error('Image smoke test exceeded its three-minute deadline');
+  process.exit(1);
+}, 180000).unref();
 
 const role = process.env.TEST_IMAGE_ROLE;
 assert(['gateway', 'sandbox'].includes(role));
@@ -12,9 +20,9 @@ assert.equal(configPath, '/etc/mcporter/mcporter.json');
 const config = JSON.parse(await readFile(configPath, 'utf8'));
 const names = role === 'gateway' ? ['ticktick'] : ['playwright', 'ticktick'];
 
-function cli(args, options = {}) {
+function command(program, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('mcporter', args, {
+    const child = spawn(program, args, {
       cwd: options.cwd ?? '/tmp',
       env: { ...process.env, ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -24,12 +32,81 @@ function cli(args, options = {}) {
     const timer = setTimeout(() => child.kill('SIGKILL'), 20000);
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
-    child.on('error', reject);
+    child.on('error', error => {
+      clearTimeout(timer);
+      reject(error);
+    });
     child.on('close', code => {
       clearTimeout(timer);
       resolve({ code, stdout, stderr });
     });
   });
+}
+
+const cli = (args, options) => command('mcporter', args, options);
+
+// Exercise the runtime links in a login shell too: mounted homes and read-only
+// roots must not trigger mise installs, shim regeneration, or npm cache writes.
+const tools = await command('bash', ['-lc',
+  'node --version && npm --version && python --version && uv --version && uvx --version',
+]);
+assert.equal(tools.code, 0, tools.stdout + tools.stderr);
+console.log(`${role} runtime tools:\n${tools.stdout.trim()}`);
+
+if (role === 'gateway') {
+  for (const program of ['openclaw', 'docker']) {
+    const result = await command(program, ['--version']);
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    console.log(result.stdout.trim());
+  }
+
+  // Start a fresh, account-free gateway and check the same endpoint as Compose.
+  // No Docker socket or provider keys are needed for startup and local health.
+  const gateway = spawn('openclaw', [
+    'gateway', '--allow-unconfigured', '--bind', 'loopback', '--port', '18789',
+  ], {
+    env: { ...process.env, OPENCLAW_STATE_DIR: '/tmp/openclaw-smoke',
+      OPENCLAW_CONFIG_PATH: '/tmp/openclaw-smoke/openclaw.json',
+      OPENCLAW_GATEWAY_TOKEN: 'openclaw-smoke-fixture-gateway-token' },
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  let startupError;
+  gateway.stdout.on('data', chunk => { output += chunk; });
+  gateway.stderr.on('data', chunk => { output += chunk; });
+  gateway.on('error', error => { startupError = error; });
+  const closed = new Promise(resolve => gateway.once('close', resolve));
+  try {
+    let healthy = false;
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      assert(!startupError, String(startupError));
+      assert.equal(gateway.exitCode, null, output);
+      assert.equal(gateway.signalCode, null, output);
+      try {
+        const response = await fetch('http://127.0.0.1:18789/healthz', {
+          signal: AbortSignal.timeout(2000),
+        });
+        await response.text();
+        healthy = response.ok;
+      } catch { /* The gateway may still be starting. */ }
+      if (healthy) break;
+      await delay(250);
+    }
+    assert(healthy, `Gateway did not become healthy:\n${output}`);
+    console.log('PASS gateway: OpenClaw starts and /healthz responds');
+  } finally {
+    const stop = signal => {
+      if (!gateway.pid) return;
+      try { process.kill(-gateway.pid, signal); }
+      catch (error) { if (error.code !== 'ESRCH') throw error; }
+    };
+    stop('SIGTERM');
+    const killTimer = setTimeout(() => stop('SIGKILL'), 5000);
+    await closed;
+    clearTimeout(killTimer);
+  }
 }
 
 // A workspace config must not shadow the explicitly selected image defaults.
@@ -119,6 +196,7 @@ try {
       });
       assert(!screenshot.isError, JSON.stringify(screenshot));
       assert((await stat('/workspace/config-smoke.png')).size > 0);
+      console.log('PASS sandbox: configured Playwright MCP navigates and saves a screenshot');
     } finally {
       await runtime.close();
     }
