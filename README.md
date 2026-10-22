@@ -54,90 +54,77 @@ into either image. See the MCP configuration section below for overrides.
 
 ## Usage
 
-Example `.env`:
+The checked-in `compose.yaml`, `.env.example`, and
+`config/openclaw.example.json` form the deployment example. Run Compose on the
+same Linux Docker host that will create the sandboxes.
 
-```properties
-# Host mount paths
-OPENCLAW_USER_BASE=/mnt/cache/appdata/openclaw
+1. Copy `.env.example` to `.env`. Set `OPENCLAW_USER_BASE` to an absolute host
+   directory, set `DOCKER_GID` to the group ID of `DOCKER_SOCKET`, and generate
+   `OPENCLAW_GATEWAY_TOKEN` with `openssl rand -hex 32`. Add the model credentials
+   you plan to use. The default image references use `latest`.
+2. Create the data directories with ownership matching UID/GID 1000. For the
+   default path, run:
 
-# Gateway settings
-OPENCLAW_GATEWAY_BIND=lan
+   ```sh
+   sudo install -d -m 0700 -o 1000 -g 1000 \
+     /mnt/cache/appdata/openclaw \
+     /mnt/cache/appdata/openclaw/config \
+     /mnt/cache/appdata/openclaw/workspace
+   ```
 
-# Auth token (generate once with `openssl rand -hex 32`)
-OPENCLAW_GATEWAY_TOKEN=
+3. For a fresh deployment, copy `config/openclaw.example.json` to
+   `<OPENCLAW_USER_BASE>/config/openclaw.json`, owned by UID/GID 1000 with mode
+   0600. For an existing deployment, merge the example's settings into your
+   existing config. It enables sandboxing for every session and selects the
+   custom sandbox image; model and channel setup remain yours to configure.
+4. Pull the gateway and sandbox images, then start the gateway:
 
-# API keys
-ANTHROPIC_API_KEY=
-#BRAVE_API_KEY=
-#OPENAI_API_KEY=
-TAVILY_API_KEY=
+   ```sh
+   docker compose config --quiet
+   docker compose pull gateway
+   docker pull ghcr.io/treyturner/openclaw-sandbox:latest
+   docker compose up -d gateway
+   docker compose run --rm cli config validate
+   docker compose run --rm cli sandbox explain
+   ```
 
-# TickTick MCP (optional; needed only when calling TickTick)
-TICKTICK_API_TOKEN=
+   If you override `OPENCLAW_SANDBOX_IMAGE`, pull that reference instead. The
+   sandbox image must exist on the daemon used by the gateway. OpenClaw creates
+   sandbox containers on demand; there is no permanent Compose sandbox service.
 
-# Optional
-OPENCLAW_EXTRA_MOUNTS=
-```
+The gateway listens on port 18789 inside its container and publishes to
+`http://127.0.0.1:18789` by default. The administration CLI shares the gateway's
+network and PID namespaces so loopback reaches the gateway and shared-state
+ownership checks can identify its process. For a remote UI, use an SSH tunnel or
+HTTPS reverse proxy and set
+`OPENCLAW_CONTROL_UI_ORIGIN` to the browser's origin. Change
+`OPENCLAW_PUBLISH_HOST` and `OPENCLAW_GATEWAY_PORT` when needed.
 
-Example `docker-compose.yml`:
+The gateway and administration CLI receive the host Docker socket and its
+supplementary group. They therefore have control over that Docker daemon.
+Sandboxes receive the workspace mount and configured environment; the Docker
+socket and gateway/provider credentials are not passed to them.
 
-```
-x-hardening: &hardening
-  user: "node:node"
-  tmpfs:
-    - /tmp:rw,nosuid,nodev,size=1g
-    - /run:rw,nosuid,nodev,size=64m
-  pids_limit: 512
+The data directory has the **same absolute path inside and outside the gateway**.
+OpenClaw sends workspace paths to the host Docker daemon when creating sandbox
+bind mounts. Mapping the directory only to `/home/node/.openclaw` would leave
+those source paths pointing at a different location on the host. State and XDG
+data persist under `OPENCLAW_USER_BASE`; workspaces are writable by UID/GID 1000.
 
-x-environment: &environment
-  OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-  BRAVE_API_KEY: ${BRAVE_API_KEY}
-  OPENAI_API_KEY: ${OPENAI_API_KEY}
-  TAVILY_API_KEY: ${TAVILY_API_KEY}
-  TICKTICK_API_TOKEN: ${TICKTICK_API_TOKEN:-}
+The example uses the Docker `bridge` network for sandbox outbound access, which
+Playwright and remote MCP services need. Sandboxes have a read-only root
+filesystem, temporary directories, resource limits, and no published ports.
+They run Playwright MCP from the custom sandbox image; OpenClaw's separate
+browser sidecar is disabled. To make sandboxes offline, change
+`agents.defaults.sandbox.docker.network` to `none`.
 
-x-volumes: &volumes
-  - ${OPENCLAW_USER_BASE}/config:/home/node/.openclaw
+If the host's default Docker DNS servers are unreachable, set
+`agents.defaults.sandbox.docker.dns` to reachable resolver addresses. Gateway DNS
+can be configured with a Compose override on `services.gateway.dns`.
 
-services:
-  gateway:
-    <<: *hardening
-    image: ghcr.io/treyturner/openclaw
-    container_name: openclaw
-    environment:
-      <<: *environment
-    volumes: *volumes
-    ports:
-      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
-      - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
-    init: true
-    restart: unless-stopped
-    command:
-      [
-        "node", "dist/index.js", "gateway",
-        "--bind", "${OPENCLAW_GATEWAY_BIND:-lan}",
-        "--port", "18789"
-      ]
-
-  cli:
-    <<: *hardening
-    image: ghcr.io/treyturner/openclaw
-    profiles: ["cli"]
-    container_name: openclaw_cli
-    environment:
-      <<: *environment
-      BROWSER: echo
-    volumes: *volumes
-    stdin_open: true
-    tty: true
-    init: true
-    entrypoint: ["node", "dist/index.js"]
-
-networks:
-  default:
-    name: openclaw
-```
+After changing the sandbox image or settings, recreate the affected sandboxes
+with `docker compose run --rm cli sandbox recreate --all`; OpenClaw creates
+replacements on the next tool call.
 
 ## MCP configuration
 
@@ -162,9 +149,9 @@ keeps the environment placeholder; the bearer header is resolved when connecting
 Without a token, Playwright and config inspection still work, while TickTick
 calls fail with the missing variable's name.
 
-The Compose example passes the token to the gateway and CLI. Sandboxes do not
-inherit the gateway's environment; when using TickTick there, merge this into
-your OpenClaw configuration:
+Compose passes the optional token to the gateway and CLI. After setting a
+nonempty `TICKTICK_API_TOKEN` in `.env`, merge this into your deployed OpenClaw
+config to enable TickTick in sandboxes as well. Provider keys stay in the gateway:
 
 ```json
 {
