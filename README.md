@@ -48,9 +48,9 @@ relative filenames resolve from `/workspace`. Browser binaries live outside the
 user's home directory and are readable by the sandbox user. Runtime caches use
 `/tmp/.cache` so they work with a read-only root filesystem.
 
-TickTick connects to `https://mcp.ticktick.com` over Streamable HTTP. Authenticate
-at runtime using OAuth or an API token as described in the official guide;
-credentials are not baked into either image.
+TickTick connects to `https://mcp.ticktick.com` over Streamable HTTP. The shipped
+configuration reads `TICKTICK_API_TOKEN` at runtime; credentials are not baked
+into either image. See the MCP configuration section below for overrides.
 
 ## Usage
 
@@ -72,6 +72,9 @@ ANTHROPIC_API_KEY=
 #OPENAI_API_KEY=
 TAVILY_API_KEY=
 
+# TickTick MCP (optional; needed only when calling TickTick)
+TICKTICK_API_TOKEN=
+
 # Optional
 OPENCLAW_EXTRA_MOUNTS=
 ```
@@ -92,6 +95,7 @@ x-environment: &environment
   BRAVE_API_KEY: ${BRAVE_API_KEY}
   OPENAI_API_KEY: ${OPENAI_API_KEY}
   TAVILY_API_KEY: ${TAVILY_API_KEY}
+  TICKTICK_API_TOKEN: ${TICKTICK_API_TOKEN:-}
 
 x-volumes: &volumes
   - ${OPENCLAW_USER_BASE}/config:/home/node/.openclaw
@@ -134,6 +138,69 @@ networks:
   default:
     name: openclaw
 ```
+
+## MCP configuration
+
+Each image has its own readable defaults at `/etc/mcporter/mcporter.json`.
+`MCPORTER_CONFIG` selects that absolute path, so commands work from any directory
+and mounted home directories do not hide the defaults. Gateway defaults contain
+TickTick; sandbox defaults contain Playwright and TickTick. Automatic editor
+config imports are disabled.
+
+To customize a runtime, bind-mount a complete config over that file, or set
+`MCPORTER_CONFIG` to another absolute path inside the container. An explicit
+`mcporter --config <file>` takes precedence. These are replacement configs;
+mcporter does not merge other home or project configs when a path is explicit.
+Edit a read-only mounted config on the host. For `mcporter config add` and other
+mutations inside the container, select a config in a writable mounted directory.
+
+For TickTick, create an API token in the TickTick web app under **Settings →
+Account & Security → API Token**, as described in the
+[official guide](https://help.ticktick.com/articles/7438129581631995904).
+Set `TICKTICK_API_TOKEN` in the runtime that calls TickTick. Config inspection
+keeps the environment placeholder; the bearer header is resolved when connecting.
+Without a token, Playwright and config inspection still work, while TickTick
+calls fail with the missing variable's name.
+
+The Compose example passes the token to the gateway and CLI. Sandboxes do not
+inherit the gateway's environment; when using TickTick there, merge this into
+your OpenClaw configuration:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "docker": {
+          "env": {
+            "TICKTICK_API_TOKEN": "${TICKTICK_API_TOKEN}"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+TickTick also requires outbound HTTPS access from the calling container; these
+image defaults do not change OpenClaw's sandbox network policy.
+
+For OAuth instead, use a custom TickTick definition with `auth: "oauth"` and no
+`Authorization` header. Set `XDG_DATA_HOME` to a mounted directory writable by
+UID 1000 so `mcporter/credentials.json` survives container replacement, and use
+`mcporter auth ticktick --no-browser` with a reachable OAuth callback. See
+[mcporter's configuration guide](https://github.com/openclaw/mcporter/blob/v0.16.0/docs/config.md)
+for OAuth setup and persistence. Browser auto-launch is disabled in both images.
+
+Run the focused configuration and authentication checks against local images:
+
+```sh
+bash tests/mcporter-config.sh <gateway-image> <sandbox-image>
+```
+
+These checks use local fixtures and require no account credentials or external
+network. They cover home mounts, working-directory changes, explicit overrides,
+bearer headers, and browser navigation and screenshots through mcporter.
 
 ## Build strategy
 

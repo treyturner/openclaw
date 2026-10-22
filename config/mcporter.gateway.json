@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ticktick": {
+      "baseUrl": "https://mcp.ticktick.com",
+      "headers": {
+        "Authorization": "Bearer ${TICKTICK_API_TOKEN}"
+      }
+    }
+  },
+  "imports": []
+}

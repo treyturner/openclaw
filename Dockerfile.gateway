@@ -55,12 +55,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
         uv pip install --python /opt/python/bin/python ${EXTRA_PIP_PKGS}; \
     fi
 
-# mcporter install & configuration
-RUN mkdir -p /app/config /home/node/.openclaw/config \
-    && ln -sf /home/node/.openclaw/config/mcporter.json /app/config/mcporter.json \
-    && chown -R node:node /home/node/.openclaw /app/config \
-    && mcporter config add ticktick https://mcp.ticktick.com \
-        --scope project
+# Readable defaults survive HOME mounts and work from every directory.
+RUN install -d -m 0755 /etc/mcporter
+COPY --chmod=0644 config/mcporter.gateway.json /etc/mcporter/mcporter.json
+ENV MCPORTER_CONFIG=/etc/mcporter/mcporter.json \
+    MCPORTER_OAUTH_NO_BROWSER=1
 
 # switch to runtime user
 USER node
