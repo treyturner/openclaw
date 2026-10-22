@@ -22,7 +22,7 @@ jobs:
       packages: write
     env:
       GATEWAY_UPSTREAM_REF: ghcr.io/openclaw/openclaw:latest
-      SANDBOX_UPSTREAM_REF: docker.io/library/node:26-bookworm-slim
+      SANDBOX_UPSTREAM_REF: ghcr.io/jdx/mise:2026.10.17-debian
       GATEWAY_DOWNSTREAM_REF: ghcr.io/treyturner/openclaw
       SANDBOX_DOWNSTREAM_REF: ghcr.io/treyturner/openclaw-sandbox
     steps:
