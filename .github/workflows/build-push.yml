@@ -1,4 +1,4 @@
-name: Build and push openclaw images (only when needed)
+name: Build and push openclaw images
 
 on:
   push:
@@ -32,57 +32,39 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
 
-      - name: Gate gateway build
-        id: gateway_gate
-        uses: ./.github/actions/build/gate
+      - name: Resolve gateway base
+        id: gateway_base
+        uses: ./.github/actions/resolve/base
         with:
           upstream-image-ref: ${{ env.GATEWAY_UPSTREAM_REF }}
-          downstream-image-ref: ${{ env.GATEWAY_DOWNSTREAM_REF }}
 
-      - name: Gate sandbox build
-        id: sandbox_gate
-        uses: ./.github/actions/build/gate
+      - name: Resolve sandbox base
+        id: sandbox_base
+        uses: ./.github/actions/resolve/base
         with:
           upstream-image-ref: ${{ env.SANDBOX_UPSTREAM_REF }}
-          downstream-image-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}
-
-      - name: Determine whether to rebuild image pair
-        id: pair
-        shell: bash -euo pipefail {0}
-        env:
-          GATEWAY_SHOULD_BUILD: ${{ steps.gateway_gate.outputs.should_build }}
-          SANDBOX_SHOULD_BUILD: ${{ steps.sandbox_gate.outputs.should_build }}
-        run: |
-          if [[ "$GATEWAY_SHOULD_BUILD" == "true" || "$SANDBOX_SHOULD_BUILD" == "true" ]]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Compute gateway image refs
         id: gateway_refs
-        if: steps.pair.outputs.should_build == 'true'
         uses: ./.github/actions/compute/image-refs
         with:
-          upstream-short-digest: ${{ steps.gateway_gate.outputs.upstream_short_digest }}
-          upstream-version: ${{ steps.gateway_gate.outputs.upstream_version }}
+          upstream-short-digest: ${{ steps.gateway_base.outputs.upstream_short_digest }}
+          upstream-version: ${{ steps.gateway_base.outputs.upstream_version }}
           downstream-repos: |
             ${{ env.GATEWAY_DOWNSTREAM_REF }}
             forgejo.treyturner.info/treyturner/openclaw
 
       - name: Compute sandbox image refs
         id: sandbox_refs
-        if: steps.pair.outputs.should_build == 'true'
         uses: ./.github/actions/compute/image-refs
         with:
-          upstream-short-digest: ${{ steps.sandbox_gate.outputs.upstream_short_digest }}
-          upstream-version: ${{ steps.sandbox_gate.outputs.upstream_version }}
+          upstream-short-digest: ${{ steps.sandbox_base.outputs.upstream_short_digest }}
+          upstream-version: ${{ steps.sandbox_base.outputs.upstream_version }}
           downstream-repos: |
             ${{ env.SANDBOX_DOWNSTREAM_REF }}
             forgejo.treyturner.info/treyturner/openclaw-sandbox
 
       - name: Login to build cache (GitHub Container Registry)
-        if: steps.pair.outputs.should_build == 'true'
         uses: docker/login-action@c144859092e8e353f3e118b0b329679a62351c3e  # v4.0.0
         with:
           registry: ghcr.io
@@ -90,13 +72,14 @@ jobs:
           password: ${{ github.token }}
 
       - name: Build gateway candidate
-        if: steps.pair.outputs.should_build == 'true'
         uses: docker/build-push-action@eb6512707bea5740b2608f2a43ece7bc543cb75b  # v7.0.0
         with:
           context: .
           file: Dockerfile.gateway
           build-args: |
-            BASE_REF=${{ env.GATEWAY_UPSTREAM_REF }}@${{ steps.gateway_gate.outputs.upstream_digest }}
+            BASE_REF=${{ env.GATEWAY_UPSTREAM_REF }}@${{ steps.gateway_base.outputs.upstream_digest }}
+          pull: true
+          no-cache-filters: gateway
           cache-from: type=registry,ref=${{ env.GATEWAY_DOWNSTREAM_REF }}:buildcache
           cache-to: type=registry,ref=${{ env.GATEWAY_DOWNSTREAM_REF }}:buildcache,mode=max
           tags: ${{ env.GATEWAY_DOWNSTREAM_REF }}:${{ steps.gateway_refs.outputs.candidate_tag }}
@@ -104,13 +87,14 @@ jobs:
           push: false
 
       - name: Build sandbox candidate
-        if: steps.pair.outputs.should_build == 'true'
         uses: docker/build-push-action@eb6512707bea5740b2608f2a43ece7bc543cb75b  # v7.0.0
         with:
           context: .
           file: Dockerfile.sandbox
           build-args: |
-            BASE_REF=${{ env.SANDBOX_UPSTREAM_REF }}@${{ steps.sandbox_gate.outputs.upstream_digest }}
+            BASE_REF=${{ env.SANDBOX_UPSTREAM_REF }}@${{ steps.sandbox_base.outputs.upstream_digest }}
+          pull: true
+          no-cache-filters: sandbox
           cache-from: type=registry,ref=${{ env.SANDBOX_DOWNSTREAM_REF }}:buildcache
           cache-to: type=registry,ref=${{ env.SANDBOX_DOWNSTREAM_REF }}:buildcache,mode=max
           tags: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
@@ -118,7 +102,6 @@ jobs:
           push: false
 
       - name: Smoke test gateway candidate
-        if: steps.pair.outputs.should_build == 'true'
         timeout-minutes: 10
         uses: ./.github/actions/test
         with:
@@ -126,7 +109,6 @@ jobs:
           role: gateway
 
       - name: Smoke test sandbox candidate
-        if: steps.pair.outputs.should_build == 'true'
         timeout-minutes: 10
         uses: ./.github/actions/test
         with:
@@ -134,7 +116,6 @@ jobs:
           role: sandbox
 
       - name: Tag and push gateway image
-        if: steps.pair.outputs.should_build == 'true'
         uses: ./.github/actions/publish
         with:
           candidate-ref: ${{ env.GATEWAY_DOWNSTREAM_REF }}:${{ steps.gateway_refs.outputs.candidate_tag }}
@@ -142,13 +123,8 @@ jobs:
           refs: ${{ steps.gateway_refs.outputs.refs }}
 
       - name: Tag and push sandbox image
-        if: steps.pair.outputs.should_build == 'true'
         uses: ./.github/actions/publish
         with:
           candidate-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
           forgejo-token: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
           refs: ${{ steps.sandbox_refs.outputs.refs }}
-
-      - name: No changes
-        if: steps.pair.outputs.should_build == 'false'
-        run: echo "Scheduled run found both base digests already published; skipping image pair."

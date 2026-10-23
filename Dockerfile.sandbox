@@ -60,9 +60,11 @@ ENV HOME=/root \
 WORKDIR /app
 
 # apt install
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update \
+RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,id=sandbox-apt-lib,sharing=locked \
+    export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
@@ -82,14 +84,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # npm install
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \
-    npm i -g mcporter @playwright/mcp@0.0.83 ${EXTRA_NPM_GLOBAL_PKGS} \
+    npm i -g mcporter@0.16.0 @playwright/mcp@0.0.83 ${EXTRA_NPM_GLOBAL_PKGS} \
     && if [[ -n "${EXTRA_NPM_LOCAL_PKGS}" ]]; then \
         npm i ${EXTRA_NPM_LOCAL_PKGS}; \
     fi
 
 # install the Chromium revision required by the installed Playwright MCP
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,id=sandbox-apt-lib,sharing=locked \
     --mount=type=cache,target=/pw-cache,id=pw-browsers,sharing=locked \
     playwright_dir="$(node -p 'require("path").dirname(require.resolve("playwright/package.json", { paths: [process.argv[1]] }))' "$(npm root -g)/@playwright/mcp")" \
     && PLAYWRIGHT_BROWSERS_PATH=/pw-cache \
