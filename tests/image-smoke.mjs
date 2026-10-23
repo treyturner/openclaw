@@ -60,6 +60,39 @@ if (role === 'gateway') {
     console.log(result.stdout.trim());
   }
 
+  // Some Engine releases require API 1.44, beyond Debian Bookworm's Docker
+  // 20.10 client. Check negotiation with that floor and with an older daemon.
+  for (const apiVersion of ['1.44', '1.41']) {
+    const requests = [];
+    const engine = http.createServer((request, response) => {
+      requests.push(request.url);
+      if (request.url === '/_ping') {
+        response.writeHead(200, { 'API-Version': apiVersion });
+        response.end('OK');
+      } else if (request.url === `/v${apiVersion}/version`) {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ Version: 'smoke-fixture',
+          ApiVersion: apiVersion, MinAPIVersion: apiVersion, Os: 'linux', Arch: 'amd64' }));
+      } else {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ message: `Engine requires API ${apiVersion}; got ${request.url}` }));
+      }
+    });
+    await new Promise(resolve => engine.listen(0, '127.0.0.1', resolve));
+    try {
+      const result = await command('docker', ['version', '--format', '{{.Server.APIVersion}}'], {
+        env: { DOCKER_HOST: `tcp://127.0.0.1:${engine.address().port}`,
+          DOCKER_CONTEXT: '', DOCKER_API_VERSION: '', DOCKER_TLS_VERIFY: '', DOCKER_CERT_PATH: '' },
+      });
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.equal(result.stdout.trim(), apiVersion);
+      assert(requests.includes(`/v${apiVersion}/version`));
+    } finally {
+      await new Promise(resolve => engine.close(resolve));
+    }
+  }
+  console.log('PASS gateway: Docker negotiates Engine API 1.44 and 1.41');
+
   // Start a fresh, account-free gateway and check the same endpoint as Compose.
   // No Docker socket or provider keys are needed for startup and local health.
   const gateway = spawn('openclaw', [
