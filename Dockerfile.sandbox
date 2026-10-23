@@ -82,12 +82,19 @@ RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked
         ${EXTRA_APT_PKGS} \
     && rm -rf /var/lib/apt/lists/*
 
-# npm install
+# Keep core MCP tools separate from optional npm packages.
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \
-    npm i -g mcporter@0.16.0 @playwright/mcp@0.0.83 ${EXTRA_NPM_GLOBAL_PKGS} \
+    npm i -g mcporter@0.16.0 @playwright/mcp@0.0.83 \
+    && install -d -m 0755 /opt/npm-global /opt/npm-local \
+    && if [[ -n "${EXTRA_NPM_GLOBAL_PKGS}" ]]; then \
+        (cd /opt/npm-global && npm i -g --prefix /opt/npm-global ${EXTRA_NPM_GLOBAL_PKGS}); \
+    fi \
     && if [[ -n "${EXTRA_NPM_LOCAL_PKGS}" ]]; then \
-        npm i ${EXTRA_NPM_LOCAL_PKGS}; \
-    fi
+        (cd /opt/npm-local && npm i --prefix /opt/npm-local ${EXTRA_NPM_LOCAL_PKGS}); \
+    fi \
+    && printf '%s\n' 'export PATH="$PATH:/opt/npm-global/bin:/opt/npm-local/node_modules/.bin"' \
+        > /etc/profile.d/npm-extras.sh
+ENV PATH=${PATH}:/opt/npm-global/bin:/opt/npm-local/node_modules/.bin
 
 # install the Chromium revision required by the installed Playwright MCP
 RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked \

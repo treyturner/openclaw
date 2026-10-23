@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
+import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 
 // Bound failures in MCP startup, browser launch, and gateway shutdown as well as
@@ -52,6 +53,36 @@ const tools = await command('bash', ['-lc',
 ]);
 assert.equal(tools.code, 0, tools.stdout + tools.stderr);
 console.log(`${role} runtime tools:\n${tools.stdout.trim()}`);
+
+if (process.env.TEST_NPM_EXTRAS === '--npm-extras') {
+  // The fixture deliberately installs an older mcporter as an optional global
+  // package. Core tools must still win, including after login PATH resets.
+  const extras = createRequire('/opt/npm-local/package.json');
+  assert(extras('is-number')(42));
+  assert(!extras('is-number')('not a number'));
+  assert.deepEqual(extras('json5').parse('{working: true}'), { working: true });
+  const optional = createRequire('/opt/npm-global/lib/node_modules/mcporter/package.json');
+  const core = createRequire('/usr/local/lib/node_modules/mcporter/package.json');
+  assert.equal(optional('./package.json').version, '0.15.0');
+  assert.notEqual(optional('./package.json').version, core('./package.json').version);
+  await writeFile('/tmp/npm-extra.json5', '{working: true}');
+  const script = [
+    'set -ex',
+    'test "$(command -v mcporter)" = /usr/local/bin/mcporter',
+    'test "$(command -v semver)" = /opt/npm-global/bin/semver',
+    'test "$(command -v json5)" = /opt/npm-local/node_modules/.bin/json5',
+    'mcporter --version',
+    'test "$(semver --range \'^1.0.0\' 1.2.3 2.0.0)" = 1.2.3',
+    'json5 --validate /tmp/npm-extra.json5',
+  ].join(' && ');
+  for (const cwd of ['/tmp', '/workspace', process.env.HOME]) {
+    for (const shell of ['-c', '-lc']) {
+      const result = await command('bash', [shell, script], { cwd });
+      assert.equal(result.code, 0, `${cwd} ${shell}: ${result.stdout}${result.stderr}`);
+    }
+  }
+  console.log(`PASS ${role}: optional npm CLIs and libraries work; core mcporter keeps priority`);
+}
 
 if (role === 'gateway') {
   for (const program of ['openclaw', 'docker']) {

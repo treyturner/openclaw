@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# != 2 || ( "$1" != gateway && "$1" != sandbox ) ]]; then
-    echo "Usage: bash tests/image-smoke.sh <gateway|sandbox> <image>" >&2
+if [[ $# -lt 2 || $# -gt 3 \
+    || ( "$1" != gateway && "$1" != sandbox ) \
+    || ( $# == 3 && "$3" != --npm-extras ) ]]; then
+    echo "Usage: bash tests/image-smoke.sh <gateway|sandbox> <image> [--npm-extras]" >&2
     exit 2
 fi
 
@@ -20,5 +22,6 @@ docker run --rm --init --interactive --read-only --network none \
     --tmpfs /workspace:rw,nosuid,nodev,uid=1000,gid=1000,size=128m \
     --tmpfs "$runtime_home:rw,nosuid,nodev,uid=1000,gid=1000,size=32m" \
     --env "TEST_IMAGE_ROLE=$role" \
+    --env "TEST_NPM_EXTRAS=${3:-}" \
     --workdir /tmp --entrypoint node "$image" \
     --input-type=module < "$test_dir/image-smoke.mjs"

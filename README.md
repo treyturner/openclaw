@@ -264,8 +264,40 @@ Extra packages can be baked into the image by adding them to space-separated str
 - `EXTRA_NPM_LOCAL_PKGS`
 - `EXTRA_PIP_PKGS`
 
+Global npm extras are installed under `/opt/npm-global`; local npm extras form a
+separate project at `/opt/npm-local`. Both install commands run from those
+directories, keeping OpenClaw's `/app` manifest and dependency tree separate.
+Their CLI directories are appended to `PATH` in normal and login shells, so core
+tools take precedence when command names overlap. These directories live outside
+mounted homes and workspaces and are readable by UID 1000.
+
+Local libraries can be resolved explicitly from their project, for example in a
+Node script using JSON5 installed through `EXTRA_NPM_LOCAL_PKGS`:
+
+```js
+import { createRequire } from 'node:module';
+const requireExtra = createRequire('/opt/npm-local/package.json');
+const JSON5 = requireExtra('json5');
+```
+
+The image does not add these libraries to `NODE_PATH`. Workspace projects can
+keep their own dependency versions.
+
 Python extras are installed into `/opt/python`, whose `bin` directory is on
 `PATH` for the runtime user. The `uv` and `uvx` commands are installed globally.
+
+To exercise optional npm installation, build each image with
+`EXTRA_NPM_GLOBAL_PKGS="mcporter@0.15.0 semver@7.7.3"` and
+`EXTRA_NPM_LOCAL_PKGS="json5@2.2.3 is-number@7.0.0"`, then run:
+
+```sh
+bash tests/image-smoke.sh gateway <gateway-image-with-extras> --npm-extras
+bash tests/image-smoke.sh sandbox <sandbox-image-with-extras> --npm-extras
+```
+
+The older optional mcporter is a test fixture for command precedence. The checks
+cover global and local CLIs, library loading, and core tool priority from multiple
+directories and both shell modes, with mounted homes and a read-only root.
 
 ## Notes
 
