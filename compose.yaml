@@ -2,7 +2,7 @@ x-runtime: &runtime
   image: ${OPENCLAW_GATEWAY_IMAGE:-ghcr.io/treyturner/openclaw:latest}
   user: "1000:1000"
   group_add:
-    - "${DOCKER_GID:?Set DOCKER_GID to the Docker socket group ID}"
+    - "${DOCKER_GID:-2375}"
   init: true
   tmpfs:
     - /tmp:rw,nosuid,nodev,size=1g
@@ -10,6 +10,7 @@ x-runtime: &runtime
   pids_limit: 512
   environment: &environment
     HOME: /home/node
+    DOCKER_HOST: unix:///run/dind/docker.sock
     OPENCLAW_STATE_DIR: ${OPENCLAW_USER_BASE:?Set OPENCLAW_USER_BASE to an absolute host path}/config
     OPENCLAW_CONFIG_PATH: ${OPENCLAW_USER_BASE}/config/openclaw.json
     OPENCLAW_WORKSPACE_DIR: ${OPENCLAW_USER_BASE}/workspace
@@ -26,23 +27,52 @@ x-runtime: &runtime
     TAVILY_API_KEY: ${TAVILY_API_KEY:-}
     TICKTICK_API_TOKEN: ${TICKTICK_API_TOKEN:-}
   volumes:
-    # Docker resolves sandbox bind sources on the host, so preserve this path.
+    # DinD resolves sandbox bind sources, so preserve this path in both services.
     - type: bind
       source: ${OPENCLAW_USER_BASE}
       target: ${OPENCLAW_USER_BASE}
       bind:
         create_host_path: false
-    - type: bind
-      source: ${DOCKER_SOCKET:-/var/run/docker.sock}
-      target: /var/run/docker.sock
-      bind:
-        create_host_path: false
+    - type: volume
+      source: dind-socket
+      target: /run/dind
   entrypoint: ["openclaw"]
 
 services:
+  dind:
+    image: docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977
+    privileged: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      DOCKER_HOST: unix:///run/dind/docker.sock
+      DOCKER_TLS_CERTDIR: ""
+    command: ["dockerd", "--host=unix:///run/dind/docker.sock", "--group=${DOCKER_GID:-2375}"]
+    volumes:
+      - type: volume
+        source: dind-data
+        target: /var/lib/docker
+      - type: volume
+        source: dind-socket
+        target: /run/dind
+      - type: bind
+        source: ${OPENCLAW_USER_BASE}
+        target: ${OPENCLAW_USER_BASE}
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
   gateway:
     <<: *runtime
     restart: unless-stopped
+    depends_on:
+      dind:
+        condition: service_healthy
     ports:
       - "${OPENCLAW_PUBLISH_HOST:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
     command: ["gateway", "--bind", "lan", "--port", "18789"]
@@ -59,6 +89,8 @@ services:
     network_mode: service:gateway
     pid: service:gateway
     depends_on:
+      dind:
+        condition: service_healthy
       gateway:
         condition: service_healthy
     environment:
@@ -67,3 +99,7 @@ services:
     stdin_open: true
     tty: true
     command: ["--help"]
+
+volumes:
+  dind-data:
+  dind-socket:
