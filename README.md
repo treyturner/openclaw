@@ -187,11 +187,19 @@ for OAuth setup and persistence. Browser auto-launch is disabled in both images.
 
 ## Build strategy
 
-This repo rebuilds and tests a gateway and sandbox image pair daily, on pushes to
-`main`, and on manual dispatch. README/Funding-only changes are ignored. An
-unchanged base digest does not imply unchanged Debian packages or npm dependencies.
+The publishing workflow rebuilds and tests a gateway and sandbox image pair daily,
+on pushes to `main`, and on manual dispatch. README/Funding-only pushes are
+ignored. An unchanged base digest does not imply unchanged Debian packages or npm
+dependencies.
 
-Workflow:
+Pull requests targeting `main` build and smoke-test both images in separate matrix
+jobs, using the same base resolution, dependency refresh policy, and smoke tests.
+These checks run for every PR update, including documentation changes, with read
+access to the repository and no registry logins, secrets, cache exports, or image
+pushes. New commits cancel older runs for the same PR without interrupting the
+publishing workflow.
+
+Publishing workflow:
 
 1. Require registry credentials and log in to GHCR and Forgejo before building; resolve each image's upstream base digest independently
 2. Build `Dockerfile.gateway` and `Dockerfile.sandbox` with their resolved bases and separate registry caches, loading both candidates locally
