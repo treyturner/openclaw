@@ -181,18 +181,45 @@ for OAuth setup and persistence. Browser auto-launch is disabled in both images.
 
 ## Build strategy
 
-This repo builds and publishes a gateway and sandbox image pair. Scheduled runs
-skip the pair when both upstream base digests already have published downstream
-images. Pushes to `main` and manual dispatches rebuild the pair regardless.
+This repo rebuilds and tests a gateway and sandbox image pair daily, on pushes to
+`main`, and on manual dispatch. README/Funding-only changes are ignored. An
+unchanged base digest does not imply unchanged Debian packages or npm dependencies.
 
 Workflow:
+
 1. Resolve each image's upstream base digest independently
-2. On scheduled runs, rebuild the pair if either downstream `base-<digest-short>` tag is missing
-3. Build `Dockerfile.gateway` and `Dockerfile.sandbox` with their resolved bases and separate registry caches, loading both candidates locally
+2. Build `Dockerfile.gateway` and `Dockerfile.sandbox` with their resolved bases and separate registry caches, loading both candidates locally
+3. Bypass the layer cache for the `gateway` and `sandbox` stages so APT, npm, and optional Python installation steps run again; reuse the sandbox's locked mise tool stage
 4. Test gateway startup and health, sandbox browser operation through the configured Playwright MCP, and both images' runtime tools and MCP configuration
 5. Tag + push both candidates only after both builds and tests pass
 
 Schedule: daily at 08:00 UTC + manual dispatch.
+
+The dependency stages refresh APT indexes and upgrade installed Debian packages
+before adding tools. Their APT caches are separate and locked. Cache mounts still
+reuse npm downloads and browser binaries; bypassing layer reuse ensures
+the installation steps actually check their repositories. This follows Docker's
+[cache invalidation guidance](https://docs.docker.com/build/cache/invalidation/).
+
+OpenClaw follows upstream `latest`, resolved to a digest for each build. The mise
+base, MCP package versions, and uv image are pinned; Node and uv downloads are
+locked with checksums in `sandbox/mise.lock`. Updating those tools requires a
+reviewed version or lockfile change. Keep uv's version in `sandbox/mise.toml` and
+the gateway's uv image reference in sync, including the image digest.
+
+Debian packages and npm transitive dependencies are refreshed within those
+constraints. These are rolling development builds, so rebuilding the same Git
+commit can produce a different image. Use a published image digest for an exact
+deployment or rollback; the Git and base tags are mutable aliases.
+
+For a local build with the same refresh policy:
+
+```sh
+docker buildx build --pull --no-cache-filter gateway \
+  -f Dockerfile.gateway --load -t openclaw-gateway:local .
+docker buildx build --pull --no-cache-filter sandbox \
+  -f Dockerfile.sandbox --load -t openclaw-sandbox:local .
+```
 
 Run the same smoke tests locally before publishing:
 

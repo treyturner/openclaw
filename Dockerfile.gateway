@@ -6,7 +6,7 @@ ARG BASE_REGISTRY=ghcr.io \
 
 ARG BASE_REF=${BASE_REGISTRY}/${BASE_OWNER}/${BASE_REPO}:${BASE_TAG}
 
-FROM ${BASE_REF}
+FROM ${BASE_REF} AS gateway
 
 ARG EXTRA_APT_PKGS="" \
     EXTRA_NPM_LOCAL_PKGS="" \
@@ -20,9 +20,11 @@ USER root
 ENV TERM=xterm-256color
 
 # apt install
-RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
-    --mount=type=cache,target=/var/cache/apt,id=apt-cache \
-    apt-get update \
+RUN --mount=type=cache,target=/var/lib/apt,id=gateway-apt-lib,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,id=gateway-apt-cache,sharing=locked \
+    export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
@@ -38,13 +40,13 @@ RUN --mount=type=cache,target=/var/lib/apt,id=apt-lib \
 
 # npm install
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \
-    npm i -g mcporter ${EXTRA_NPM_GLOBAL_PKGS} \
+    npm i -g mcporter@0.16.0 ${EXTRA_NPM_GLOBAL_PKGS} \
     && if [[ -n "${EXTRA_NPM_LOCAL_PKGS}" ]]; then \
         npm i ${EXTRA_NPM_LOCAL_PKGS}; \
     fi
 
 # install uv globally so the runtime user can execute it
-COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff /uv /uvx /usr/local/bin/
 
 # install optional Python tools independently of MCP servers
 ENV PATH=/opt/python/bin:${PATH}
