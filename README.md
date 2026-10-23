@@ -28,6 +28,12 @@ The sandbox runs as `sandbox` (UID/GID 1000), with `HOME=/home/sandbox` and
 `/app` during the build. Its default command is `sleep infinity`; OpenClaw manages tool
 execution inside the running container. The OpenClaw CLI belongs to the gateway.
 
+The gateway's Docker CLI is copied from the official `docker:29.9.2-cli` image,
+pinned by digest in `Dockerfile.gateway`. The Docker daemon and container runtime
+run on the host. OpenClaw uses the core CLI to manage sandboxes through the
+mounted socket; run Compose and image builds on the host. Update the CLI's image
+tag and digest together when upgrading it.
+
 The sandbox's tool versions are declared in `sandbox/mise.toml` and resolved in
 `sandbox/mise.lock`, including download checksums for Linux x64 and ARM64. Builds
 use `mise install --locked`. Tools live under `/mise`, outside the user's home
@@ -202,10 +208,11 @@ the installation steps actually check their repositories. This follows Docker's
 [cache invalidation guidance](https://docs.docker.com/build/cache/invalidation/).
 
 OpenClaw follows upstream `latest`, resolved to a digest for each build. The mise
-base, MCP package versions, and uv image are pinned; Node and uv downloads are
-locked with checksums in `sandbox/mise.lock`. Updating those tools requires a
-reviewed version or lockfile change. Keep uv's version in `sandbox/mise.toml` and
-the gateway's uv image reference in sync, including the image digest.
+base, MCP package versions, Docker CLI image, and uv image are pinned. Node and uv
+downloads are locked with checksums in `sandbox/mise.lock`. Updating those tools
+requires a reviewed version or lockfile change. Keep uv's version in
+`sandbox/mise.toml` and the gateway's uv image reference in sync, including the
+image digest.
 
 Debian packages and npm transitive dependencies are refreshed within those
 constraints. These are rolling development builds, so rebuilding the same Git
@@ -232,7 +239,8 @@ Tests run as each image's default user with a read-only root filesystem, empty
 mounted home and workspace directories, and no external network, Docker socket,
 or account credentials. Local fixtures cover MCP configuration discovery,
 explicit overrides, and bearer authentication. The gateway must start and
-respond to `/healthz`; the sandbox must navigate and save a screenshot through
+respond to `/healthz` and negotiate Docker Engine APIs 1.44 and 1.41 against local
+fixtures; the sandbox must navigate and save a screenshot through
 its configured Playwright MCP. Both must run Node, npm, Python, and uv from a
 login shell. A failure in either candidate prevents publication of both images.
 
