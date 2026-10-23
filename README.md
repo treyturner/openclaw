@@ -29,10 +29,10 @@ The sandbox runs as `sandbox` (UID/GID 1000), with `HOME=/home/sandbox` and
 execution inside the running container. The OpenClaw CLI belongs to the gateway.
 
 The gateway's Docker CLI is copied from the official `docker:29.9.2-cli` image,
-pinned by digest in `Dockerfile.gateway`. The Docker daemon and container runtime
-run on the host. OpenClaw uses the core CLI to manage sandboxes through the
-mounted socket; run Compose and image builds on the host. Update the CLI's image
-tag and digest together when upgrading it.
+pinned by digest in `Dockerfile.gateway`. A separate `dind` Compose service runs
+the sandbox Docker daemon and container runtime. OpenClaw manages that daemon
+through a mounted Unix socket; run Compose and image builds on the outer Docker
+host. Update the CLI and DinD image tags and digests together when upgrading them.
 
 The sandbox's tool versions are declared in `sandbox/mise.toml` and resolved in
 `sandbox/mise.lock`, including download checksums for Linux x64 and ARM64. Builds
@@ -61,13 +61,13 @@ into either image. See the MCP configuration section below for overrides.
 ## Usage
 
 The checked-in `compose.yaml`, `.env.example`, and
-`config/openclaw.example.json` form the deployment example. Run Compose on the
-same Linux Docker host that will create the sandboxes.
+`config/openclaw.example.json` form the deployment example. Run Compose on a Linux
+Docker host that supports privileged DinD containers.
 
 1. Copy `.env.example` to `.env`. Set `OPENCLAW_USER_BASE` to an absolute host
-   directory, set `DOCKER_GID` to the group ID of `DOCKER_SOCKET`, and generate
-   `OPENCLAW_GATEWAY_TOKEN` with `openssl rand -hex 32`. Add the model credentials
-   you plan to use. The default image references use `latest`.
+   directory and generate `OPENCLAW_GATEWAY_TOKEN` with `openssl rand -hex 32`.
+   Add the model credentials you plan to use. The default image references use
+   `latest`.
 2. Create the data directories with ownership matching UID/GID 1000. For the
    default path, run:
 
@@ -83,20 +83,23 @@ same Linux Docker host that will create the sandboxes.
    0600. For an existing deployment, merge the example's settings into your
    existing config. It enables sandboxing for every session and selects the
    custom sandbox image; model and channel setup remain yours to configure.
-4. Pull the gateway and sandbox images, then start the gateway:
+4. Pull the outer service images, start DinD, and pull the sandbox image into its
+   image store before starting the gateway:
 
    ```sh
    docker compose config --quiet
-   docker compose pull gateway
-   docker pull ghcr.io/treyturner/openclaw-sandbox:latest
+   docker compose pull dind gateway
+   docker compose up -d --wait dind
+   docker compose exec dind docker pull ghcr.io/treyturner/openclaw-sandbox:latest
    docker compose up -d gateway
    docker compose run --rm cli config validate
    docker compose run --rm cli sandbox explain
    ```
 
    If you override `OPENCLAW_SANDBOX_IMAGE`, pull that reference instead. The
-   sandbox image must exist on the daemon used by the gateway. OpenClaw creates
-   sandbox containers on demand; there is no permanent Compose sandbox service.
+   sandbox image must exist inside DinD; pulling it on the outer host does not
+   populate DinD's image store. OpenClaw creates sandbox containers on demand;
+   there is no permanent Compose sandbox service.
 
 The gateway listens on port 18789 inside its container and publishes to
 `http://127.0.0.1:18789` by default. The administration CLI shares the gateway's
@@ -106,31 +109,48 @@ HTTPS reverse proxy and set
 `OPENCLAW_CONTROL_UI_ORIGIN` to the browser's origin. Change
 `OPENCLAW_PUBLISH_HOST` and `OPENCLAW_GATEWAY_PORT` when needed.
 
-The gateway and administration CLI receive the host Docker socket and its
-supplementary group. They therefore have control over that Docker daemon.
-Sandboxes receive the workspace mount and configured environment; the Docker
-socket and gateway/provider credentials are not passed to them.
+The gateway and administration CLI mount the `dind-socket` volume and use
+`DOCKER_HOST=unix:///run/dind/docker.sock`. DinD creates the socket with group 1000
+so both services can access it as UID/GID 1000. Its daemon listens only on that
+Unix socket, with no TCP listener or published ports. The outer host's Docker
+socket is not mounted into the stack. Sandboxes receive the workspace mount and
+configured environment; the Docker socket and gateway/provider credentials are
+not passed to them.
 
-The data directory has the **same absolute path inside and outside the gateway**.
-OpenClaw sends workspace paths to the host Docker daemon when creating sandbox
-bind mounts. Mapping the directory only to `/home/node/.openclaw` would leave
-those source paths pointing at a different location on the host. State and XDG
-data persist under `OPENCLAW_USER_BASE`; workspaces are writable by UID/GID 1000.
+DinD uses a privileged container, so this separates Docker resources and API
+access from the outer daemon while retaining privileged access to the host
+kernel. Its image and container data persist in the `dind-data` volume across
+service recreation and `docker compose down`. Removing that volume (including
+with `docker compose down --volumes`) deletes the sandbox daemon's stored images
+and containers. Gateway startup waits for DinD's health check to pass.
 
-The example uses the Docker `bridge` network for sandbox outbound access, which
+The data directory has the **same absolute path on the outer host and inside
+both the gateway and DinD**. OpenClaw sends workspace paths to DinD when creating
+sandbox bind mounts, so DinD must see those paths too. State and XDG data persist
+under `OPENCLAW_USER_BASE`; workspaces are writable by UID/GID 1000. Add matching
+mounts to both services if you configure workspaces outside that directory.
+
+The example uses DinD's Docker `bridge` network for sandbox outbound access, which
 Playwright and remote MCP services need. Sandboxes have a read-only root
 filesystem, temporary directories, resource limits, and no published ports.
 They run Playwright MCP from the custom sandbox image; OpenClaw's separate
 browser sidecar is disabled. To make sandboxes offline, change
 `agents.defaults.sandbox.docker.network` to `none`.
 
-If the host's default Docker DNS servers are unreachable, set
+If DinD's default Docker DNS servers are unreachable, set
 `agents.defaults.sandbox.docker.dns` to reachable resolver addresses. Gateway DNS
-can be configured with a Compose override on `services.gateway.dns`.
+and DinD's registry access can be configured with a Compose override on
+`services.gateway.dns` and `services.dind.dns`, respectively.
 
 After changing the sandbox image or settings, recreate the affected sandboxes
 with `docker compose run --rm cli sandbox recreate --all`; OpenClaw creates
 replacements on the next tool call.
+
+When moving an existing deployment from the host socket, recreate the gateway
+with this Compose configuration and pull the sandbox image into DinD. Existing
+sandbox containers on the outer daemon are not migrated; remove those old
+sandboxes separately after the replacement works. `DOCKER_SOCKET` and
+`DOCKER_GID` are no longer used by this stack.
 
 ## MCP configuration
 
