@@ -193,13 +193,24 @@ unchanged base digest does not imply unchanged Debian packages or npm dependenci
 
 Workflow:
 
-1. Resolve each image's upstream base digest independently
+1. Require registry credentials and log in to GHCR and Forgejo before building; resolve each image's upstream base digest independently
 2. Build `Dockerfile.gateway` and `Dockerfile.sandbox` with their resolved bases and separate registry caches, loading both candidates locally
 3. Bypass the layer cache for the `gateway` and `sandbox` stages so APT, npm, and optional Python installation steps run again; reuse the sandbox's locked mise tool stage
 4. Test gateway startup and health, sandbox browser operation through the configured Playwright MCP, and both images' runtime tools and MCP configuration
-5. Tag + push both candidates only after both builds and tests pass
+5. Publish both candidates to GHCR after both builds and tests pass, then publish both to Forgejo
 
 Schedule: daily at 08:00 UTC + manual dispatch.
+
+Both registries are required. GHCR uses the workflow's `GITHUB_TOKEN` with package
+write permission. Set the repository secret `FORGEJO_REGISTRY_TOKEN` to a token
+that can write both Forgejo packages as the repository owner. A missing token or
+failed login stops the workflow before any builds or release tag pushes.
+
+A Forgejo push failure fails the workflow after both GHCR images have been
+published. Pushes across tags and repositories are separate operations, so a
+later failure can leave only some tags updated. Rerun the workflow to retry the
+pair; the rebuild may include newer upstream images or dependencies. New runs
+wait for the active run instead of automatically cancelling publication midway.
 
 The shared `.dockerignore` allows only the two mcporter configuration files and
 the sandbox mise manifest and lockfile into the build context. Git history,
