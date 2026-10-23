@@ -12,7 +12,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-test-push:
@@ -28,6 +28,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Check required registry credentials
+        shell: bash
+        env:
+          FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+        run: |
+          if [[ -z "$FORGEJO_REGISTRY_TOKEN" ]]; then
+            echo "::error::FORGEJO_REGISTRY_TOKEN is required to publish both images to Forgejo. Set the repository secret before building."
+            exit 1
+          fi
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c144859092e8e353f3e118b0b329679a62351c3e  # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+
+      - name: Login to Forgejo Container Registry
+        uses: docker/login-action@c144859092e8e353f3e118b0b329679a62351c3e  # v4.0.0
+        with:
+          registry: forgejo.treyturner.info
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
@@ -63,13 +87,6 @@ jobs:
           downstream-repos: |
             ${{ env.SANDBOX_DOWNSTREAM_REF }}
             forgejo.treyturner.info/treyturner/openclaw-sandbox
-
-      - name: Login to build cache (GitHub Container Registry)
-        uses: docker/login-action@c144859092e8e353f3e118b0b329679a62351c3e  # v4.0.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
 
       - name: Build gateway candidate
         uses: docker/build-push-action@eb6512707bea5740b2608f2a43ece7bc543cb75b  # v7.0.0
@@ -115,16 +132,30 @@ jobs:
           candidate-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
           role: sandbox
 
-      - name: Tag and push gateway image
+      - name: Publish gateway to GHCR
         uses: ./.github/actions/publish
         with:
           candidate-ref: ${{ env.GATEWAY_DOWNSTREAM_REF }}:${{ steps.gateway_refs.outputs.candidate_tag }}
-          forgejo-token: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+          registry: ghcr.io
           refs: ${{ steps.gateway_refs.outputs.refs }}
 
-      - name: Tag and push sandbox image
+      - name: Publish sandbox to GHCR
         uses: ./.github/actions/publish
         with:
           candidate-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
-          forgejo-token: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+          registry: ghcr.io
+          refs: ${{ steps.sandbox_refs.outputs.refs }}
+
+      - name: Publish gateway to Forgejo
+        uses: ./.github/actions/publish
+        with:
+          candidate-ref: ${{ env.GATEWAY_DOWNSTREAM_REF }}:${{ steps.gateway_refs.outputs.candidate_tag }}
+          registry: forgejo.treyturner.info
+          refs: ${{ steps.gateway_refs.outputs.refs }}
+
+      - name: Publish sandbox to Forgejo
+        uses: ./.github/actions/publish
+        with:
+          candidate-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
+          registry: forgejo.treyturner.info
           refs: ${{ steps.sandbox_refs.outputs.refs }}
