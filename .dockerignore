@@ -1,7 +1,6 @@
-.dockerignore
-.github
-Dockerfile
-LICENSE
-README.md
-.env
-.env.*
+# Only local files copied by the image builds belong in the context.
+**
+!config/mcporter.gateway.json
+!config/mcporter.sandbox.json
+!sandbox/mise.toml
+!sandbox/mise.lock

@@ -201,6 +201,12 @@ Workflow:
 
 Schedule: daily at 08:00 UTC + manual dispatch.
 
+The shared `.dockerignore` allows only the two mcporter configuration files and
+the sandbox mise manifest and lockfile into the build context. Git history,
+deployment files, tests, and local files are excluded. Add an explicit exception
+when a Dockerfile needs to copy a new local input. Docker sends the selected
+Dockerfile separately, as described in its [build context documentation](https://docs.docker.com/build/concepts/context/#dockerignore-files).
+
 The dependency stages refresh APT indexes and upgrade installed Debian packages
 before adding tools. Their APT caches are separate and locked. Cache mounts still
 reuse npm downloads and browser binaries; bypassing layer reuse ensures
