@@ -40,12 +40,19 @@ RUN --mount=type=cache,target=/var/lib/apt,id=gateway-apt-lib,sharing=locked \
 # The gateway controls the host daemon using only the official Docker CLI.
 COPY --from=docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb /usr/local/bin/docker /usr/local/bin/docker
 
-# npm install
+# Keep core MCP tools separate from optional npm packages.
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \
-    npm i -g mcporter@0.16.0 ${EXTRA_NPM_GLOBAL_PKGS} \
+    npm i -g mcporter@0.16.0 \
+    && install -d -m 0755 /opt/npm-global /opt/npm-local \
+    && if [[ -n "${EXTRA_NPM_GLOBAL_PKGS}" ]]; then \
+        (cd /opt/npm-global && npm i -g --prefix /opt/npm-global ${EXTRA_NPM_GLOBAL_PKGS}); \
+    fi \
     && if [[ -n "${EXTRA_NPM_LOCAL_PKGS}" ]]; then \
-        npm i ${EXTRA_NPM_LOCAL_PKGS}; \
-    fi
+        (cd /opt/npm-local && npm i --prefix /opt/npm-local ${EXTRA_NPM_LOCAL_PKGS}); \
+    fi \
+    && printf '%s\n' 'export PATH="$PATH:/opt/npm-global/bin:/opt/npm-local/node_modules/.bin"' \
+        > /etc/profile.d/npm-extras.sh
+ENV PATH=${PATH}:/opt/npm-global/bin:/opt/npm-local/node_modules/.bin
 
 # install uv globally so the runtime user can execute it
 COPY --from=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff /uv /uvx /usr/local/bin/
