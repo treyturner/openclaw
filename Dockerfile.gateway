@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/var/lib/apt,id=gateway-apt-lib,sharing=locked \
         ${EXTRA_APT_PKGS} \
     && rm -rf /var/lib/apt/lists/*
 
-# The gateway controls the host daemon using only the official Docker CLI.
+# The gateway controls the sandbox daemon using only the official Docker CLI.
 COPY --from=docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb /usr/local/bin/docker /usr/local/bin/docker
 
 # Keep core MCP tools separate from optional npm packages.
