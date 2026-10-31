@@ -1,25 +1,21 @@
-x-runtime: &runtime
-  image: ${OPENCLAW_GATEWAY_IMAGE:-ghcr.io/treyturner/openclaw:latest}
+x-openclaw-launcher: &openclaw-launcher
+  image: docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb
   user: "1000:1000"
   group_add:
     - "${DOCKER_GID:-2375}"
   init: true
+  read_only: true
+  network_mode: none
   tmpfs:
-    - /tmp:rw,nosuid,nodev,size=1g
-    - /run:rw,nosuid,nodev,size=64m
-  pids_limit: 512
-  environment: &environment
-    HOME: /home/node
+    - /tmp:rw,nosuid,nodev,size=64m
+  environment:
+    HOME: /tmp
     DOCKER_HOST: unix:///run/dind/docker.sock
-    OPENCLAW_STATE_DIR: ${OPENCLAW_USER_BASE:?Set OPENCLAW_USER_BASE to an absolute host path}/config
-    OPENCLAW_CONFIG_PATH: ${OPENCLAW_USER_BASE}/config/openclaw.json
-    OPENCLAW_WORKSPACE_DIR: ${OPENCLAW_USER_BASE}/workspace
+    DOCKER_GID: ${DOCKER_GID:-2375}
+    OPENCLAW_USER_BASE: ${OPENCLAW_USER_BASE:?Set OPENCLAW_USER_BASE to an absolute host path}
+    OPENCLAW_GATEWAY_IMAGE: ${OPENCLAW_GATEWAY_IMAGE:-ghcr.io/treyturner/openclaw:latest}
     OPENCLAW_SANDBOX_IMAGE: ${OPENCLAW_SANDBOX_IMAGE:-ghcr.io/treyturner/openclaw-sandbox:latest}
     OPENCLAW_CONTROL_UI_ORIGIN: ${OPENCLAW_CONTROL_UI_ORIGIN:-http://127.0.0.1:18789}
-    XDG_CONFIG_HOME: ${OPENCLAW_USER_BASE}/xdg/config
-    XDG_DATA_HOME: ${OPENCLAW_USER_BASE}/xdg/data
-    XDG_STATE_HOME: ${OPENCLAW_USER_BASE}/xdg/state
-    XDG_CACHE_HOME: /tmp/.cache
     OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?Set OPENCLAW_GATEWAY_TOKEN}
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -27,19 +23,21 @@ x-runtime: &runtime
     TAVILY_API_KEY: ${TAVILY_API_KEY:-}
     TICKTICK_API_TOKEN: ${TICKTICK_API_TOKEN:-}
   volumes:
-    # DinD resolves sandbox bind sources, so preserve this path in both services.
-    - type: bind
-      source: ${OPENCLAW_USER_BASE}
-      target: ${OPENCLAW_USER_BASE}
-      bind:
-        create_host_path: false
     - type: volume
       source: dind-socket
       target: /run/dind
-  entrypoint: ["openclaw"]
+  configs:
+    - source: openclaw-inner-compose
+      target: /etc/openclaw/compose.yaml
+    - source: openclaw-compose-script
+      target: /etc/openclaw/compose.sh
+  depends_on:
+    openclaw-dind:
+      condition: service_healthy
+  entrypoint: ["/bin/sh", "/etc/openclaw/compose.sh"]
 
 services:
-  dind:
+  openclaw-dind:
     image: docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977
     privileged: true
     restart: unless-stopped
@@ -47,7 +45,10 @@ services:
     environment:
       DOCKER_HOST: unix:///run/dind/docker.sock
       DOCKER_TLS_CERTDIR: ""
+    # Explicit dockerd keeps the Docker API on the Unix socket only.
     command: ["dockerd", "--host=unix:///run/dind/docker.sock", "--group=${DOCKER_GID:-2375}"]
+    ports:
+      - "${OPENCLAW_PUBLISH_HOST:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
     volumes:
       - type: volume
         source: dind-data
@@ -67,39 +68,25 @@ services:
       retries: 12
       start_period: 20s
 
-  gateway:
-    <<: *runtime
-    restart: unless-stopped
-    depends_on:
-      dind:
-        condition: service_healthy
-    ports:
-      - "${OPENCLAW_PUBLISH_HOST:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
-    command: ["gateway", "--bind", "lan", "--port", "18789"]
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:18789/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 120s
+  # One-shot controller: the gateway container itself is created inside DinD.
+  openclaw-deploy:
+    <<: *openclaw-launcher
+    command: ["up", "--detach", "--wait"]
 
-  cli:
-    <<: *runtime
+  openclaw-cli:
+    <<: *openclaw-launcher
     profiles: ["cli"]
-    network_mode: service:gateway
-    pid: service:gateway
-    depends_on:
-      dind:
-        condition: service_healthy
-      gateway:
-        condition: service_healthy
-    environment:
-      <<: *environment
-      BROWSER: echo
     stdin_open: true
     tty: true
+    entrypoint: ["/bin/sh", "/etc/openclaw/compose.sh", "cli"]
     command: ["--help"]
 
 volumes:
   dind-data:
   dind-socket:
+
+configs:
+  openclaw-inner-compose:
+    file: ./compose.inner.yaml
+  openclaw-compose-script:
+    file: ./scripts/compose-inner.sh
