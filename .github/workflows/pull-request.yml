@@ -60,3 +60,24 @@ jobs:
         with:
           candidate-ref: openclaw-${{ matrix.role }}:pr-${{ github.event.pull_request.number }}
           role: ${{ matrix.role }}
+
+  compose-test:
+    name: Compose sandbox integration
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      # The matrix above tests candidate images. This job checks the deployment
+      # files against the published pair without publishing any PR images.
+      - name: Make room for both Docker image stores
+        run: sudo rm -rf /usr/local/lib/android
+
+      - name: Exercise nested gateway and sandbox creation
+        run: |
+          python3 tests/compose-smoke.py \
+            ghcr.io/treyturner/openclaw:latest \
+            ghcr.io/treyturner/openclaw-sandbox:latest

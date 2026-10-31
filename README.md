@@ -29,15 +29,20 @@ The sandbox runs as `sandbox` (UID/GID 1000), with `HOME=/home/sandbox` and
 execution inside the running container. The OpenClaw CLI belongs to the gateway.
 
 The gateway's Docker CLI is copied from the official `docker:29.9.2-cli` image,
-pinned by digest in `Dockerfile.gateway`. A separate `dind` Compose service runs
-the sandbox Docker daemon and container runtime. OpenClaw manages that daemon
-through a mounted Unix socket; run Compose and image builds on the outer Docker
-host. Update the CLI and DinD image tags and digests together when upgrading them.
+pinned by digest in `Dockerfile.gateway`. The outer Compose stack runs a dedicated
+`openclaw-dind` Docker daemon and two small controller services. The inner stack
+in `compose.inner.yaml` runs `openclaw-gateway` and the administration CLI through
+that daemon; OpenClaw creates sandbox containers there as needed.
 
-The outer Compose stack starts the gateway and DinD as separate containers. The
-gateway runs the web UI/API and uses DinD's daemon to create sandbox containers.
-Each service has its own network namespace; the shared Docker socket gives the
-gateway access to the sandbox daemon without sharing IP addresses or listeners.
+**The gateway and its sandboxes must use the daemon that created the gateway.**
+OpenClaw inspects its own container and verifies its identity before translating
+workspace bind sources. An outer gateway connected to a separate DinD daemon
+fails that check even when the workspace paths match. See the
+[upstream identity check](https://github.com/openclaw/openclaw/blob/fe06181/src/agents/sandbox/docker-mount-source.ts).
+
+The gateway uses DinD's mounted Unix socket. The outer host's Docker socket is
+not mounted into the stack. Update the CLI, controller, and DinD image tags and
+digests together when upgrading Docker.
 
 The sandbox's tool versions are declared in `sandbox/mise.toml` and resolved in
 `sandbox/mise.lock`, including download checksums for Linux x64 and ARM64. Builds
@@ -65,14 +70,16 @@ into either image. See the MCP configuration section below for overrides.
 
 ## Usage
 
-The checked-in `compose.yaml`, `.env.example`, and
-`config/openclaw.example.json` form the deployment example. Run Compose on a Linux
-Docker host that supports privileged DinD containers.
+`compose.yaml` is the outer stack. `compose.inner.yaml` defines the services
+created inside DinD. Keep both files and `scripts/compose-inner.sh` together when
+copying this deployment into another Compose project. The outer file's two
+`configs` entries point to those files; adjust their paths if you move them.
+Run Compose on a Linux Docker host that supports privileged DinD containers.
 
 1. Copy `.env.example` to `.env`. Set `OPENCLAW_USER_BASE` to an absolute host
    directory and generate `OPENCLAW_GATEWAY_TOKEN` with `openssl rand -hex 32`.
-   Add the model credentials you plan to use. The default image references use
-   `latest`.
+   Add the model credentials you plan to use. Set `OPENCLAW_CONTROL_UI_ORIGIN`
+   to the browser URL when using a reverse proxy.
 2. Create the data directories with ownership matching UID/GID 1000. For the
    default path, run:
 
@@ -85,103 +92,112 @@ Docker host that supports privileged DinD containers.
 
 3. For a fresh deployment, copy `config/openclaw.example.json` to
    `<OPENCLAW_USER_BASE>/config/openclaw.json`, owned by UID/GID 1000 with mode
-   0600. For an existing deployment, merge the example's settings into your
-   existing config. It enables sandboxing for every session and selects the
-   custom sandbox image; model and channel setup remain yours to configure.
-4. Pull the outer service images, start DinD, and pull the sandbox image into its
-   image store before starting the gateway:
+   0600. For an existing deployment, merge its settings into your existing
+   config. Model and channel setup remain yours to configure.
+4. Start DinD, pull both application images into its store, then deploy the
+   inner gateway:
 
    ```sh
    docker compose config --quiet
-   docker compose pull dind gateway
-   docker compose up -d --wait dind
-   docker compose exec dind docker pull ghcr.io/treyturner/openclaw-sandbox:latest
-   docker compose up -d gateway
-   docker compose run --rm cli config validate
-   docker compose run --rm cli sandbox explain
+   docker compose pull openclaw-dind openclaw-deploy
+   docker compose up -d --wait openclaw-dind
+   docker compose run --rm openclaw-deploy pull
+   docker compose run --rm openclaw-deploy up --detach --wait
+   docker compose run --rm openclaw-cli config validate
+   docker compose run --rm openclaw-cli sandbox explain
    ```
 
-   If you override `OPENCLAW_SANDBOX_IMAGE`, pull that reference instead. The
-   sandbox image must exist inside DinD; pulling it on the outer host does not
-   populate DinD's image store. OpenClaw creates sandbox containers on demand;
-   there is no permanent Compose sandbox service.
+The controller uses the image references from `.env` for both pulls. A plain
+`docker pull` on the outer host does not populate DinD's image store. On a fresh
+store, the deployment controller also pulls a missing sandbox image automatically.
+For later updates, repeat the controller's `pull` and `up` commands.
 
-The gateway listens on port 18789 inside its container and publishes to
-`http://127.0.0.1:18789` by default. The administration CLI shares the gateway's
-network and PID namespaces so loopback reaches the gateway and shared-state
-ownership checks can identify its process. For a remote UI, use an SSH tunnel or
-HTTPS reverse proxy and set
-`OPENCLAW_CONTROL_UI_ORIGIN` to the browser's origin. Change
-`OPENCLAW_PUBLISH_HOST` and `OPENCLAW_GATEWAY_PORT` when needed.
+`docker compose up -d` starts DinD and the deployment controller together. The
+controller exits successfully once the inner gateway is healthy; an exited
+`openclaw-deploy` container with status 0 is expected. It holds no long-running
+OpenClaw process. Both controllers run without network access and use only the
+shared socket. Model credentials pass to the inner services through their
+controller's environment; DinD itself receives no model credentials.
 
-The gateway's `--bind lan` command makes OpenClaw listen on `0.0.0.0` **inside the
-gateway container**, as described in the [gateway configuration reference](https://docs.openclaw.ai/gateway/config-gateway).
-`OPENCLAW_PUBLISH_HOST` controls the **outer host address** in
-`services.gateway.ports`; it takes effect only when that port mapping is present.
-`OPENCLAW_CONTROL_UI_ORIGIN` selects the allowed browser origin, such as
-`https://oc.example.com`; it does not select a listening interface.
+Manage the inner stack through the controller:
 
-For a macvlan deployment with a dedicated gateway IP, point the reverse proxy
-directly to that gateway IP on port 18789. For example, if DinD is
-`192.168.20.50` and the gateway is `192.168.20.51`, the backend is
-`http://192.168.20.51:18789`. Terminate HTTPS at the proxy and use HTTP for this
-backend unless you separately configure gateway TLS. Container IPs are directly
-addressable on [macvlan networks](https://docs.docker.com/engine/network/drivers/macvlan/),
-so this route does not need a host `ports` mapping or `OPENCLAW_PUBLISH_HOST`.
-Remove the gateway's `ports` mapping when using only this route. Keep port 18789
-off DinD: publishing a port on DinD does not forward it to the gateway.
+```sh
+docker compose run --rm openclaw-deploy ps
+docker compose run --rm openclaw-deploy logs --tail 100 openclaw-gateway
+docker compose run --rm openclaw-deploy exec openclaw-gateway \
+  curl -i http://127.0.0.1:18789/healthz
+docker compose run --rm openclaw-cli sandbox recreate --all
+```
 
-To check this route, request `http://<gateway-ip>:18789/healthz` from the reverse
-proxy host; a healthy gateway returns HTTP 200. Check the application locally
-with `docker compose exec gateway curl -i http://127.0.0.1:18789/healthz`, using
-your gateway service's name. A direct request from the outer Docker host can fail
-because macvlan normally isolates containers from that host; use the proxy host
-or another LAN machine for the container-IP check.
+The inner CLI shares the gateway's network and PID namespaces so loopback
+reaches the gateway and shared-state ownership checks can identify its process.
+The controller preserves interactive input for commands such as onboarding.
 
-The gateway and administration CLI mount the `dind-socket` volume and use
-`DOCKER_HOST=unix:///run/dind/docker.sock`. DinD creates the socket with group
-`DOCKER_GID` (default 2375), and both client services receive that supplementary
-group while running as UID/GID 1000. This value is a Unix group ID, independent of
-any TCP port number. Its daemon listens only on that
-Unix socket, with no TCP listener or published ports. The outer host's Docker
-socket is not mounted into the stack. Sandboxes receive the workspace mount and
-configured environment; the Docker socket and gateway/provider credentials are
-not passed to them.
+The gateway uses `--bind lan`, which listens on `0.0.0.0` inside its container.
+The inner stack publishes gateway port 18789 on **DinD's interfaces**. The outer
+stack then publishes that port on
+`${OPENCLAW_PUBLISH_HOST}:${OPENCLAW_GATEWAY_PORT}`, defaulting to
+`127.0.0.1:18789` on the physical host. These are two separate port mappings.
+The Docker API continues to listen only on its Unix socket.
 
-DinD uses a privileged container, so this separates Docker resources and API
-access from the outer daemon while retaining privileged access to the host
-kernel. Its image and container data persist in the `dind-data` volume across
-service recreation and `docker compose down`. Removing that volume (including
-with `docker compose down --volumes`) deletes the sandbox daemon's stored images
-and containers. Gateway startup waits for DinD's health check to pass.
+For an HTTPS reverse proxy, terminate TLS at the proxy and forward plain HTTP to
+the gateway port unless you separately configure gateway TLS. Set
+`OPENCLAW_CONTROL_UI_ORIGIN` to the HTTPS browser origin. That setting controls
+the allowed origin, rather than a listening interface. Configure OpenClaw's
+`gateway.trustedProxies` for the proxy's actual source IP, as described in the
+[upstream proxy guidance](https://docs.openclaw.ai/gateway/security/network-exposure#reverse-proxy-configuration).
 
-The data directory has the **same absolute path on the outer host and inside
-both the gateway and DinD**. OpenClaw sends workspace paths to DinD when creating
-sandbox bind mounts, so DinD must see those paths too. State and XDG data persist
-under `OPENCLAW_USER_BASE`; workspaces are writable by UID/GID 1000. Add matching
-mounts to both services if you configure workspaces outside that directory.
+For your own macvlan/VLAN Compose stack, attach **`openclaw-dind`** to the VLAN.
+For example, a DinD IP of `192.168.20.50` gives HAProxy the backend
+`http://192.168.20.50:18789`. The inner gateway is reached through DinD's port
+mapping; it needs no separate VLAN address. The two outer controller services
+use Unix sockets and can keep `network_mode: none`. No host port mapping is
+needed for direct macvlan access, so remove `openclaw-dind.ports` from the outer
+file in that deployment. `OPENCLAW_PUBLISH_HOST` then has no effect. Keep the
+inner gateway's port mapping: it is what forwards DinD port 18789 to OpenClaw.
 
-The example uses DinD's Docker `bridge` network for sandbox outbound access, which
-Playwright and remote MCP services need. Sandboxes have a read-only root
-filesystem, temporary directories, resource limits, and no published ports.
-They run Playwright MCP from the custom sandbox image; OpenClaw's separate
-browser sidecar is disabled. To make sandboxes offline, change
-`agents.defaults.sandbox.docker.network` to `none`.
+To check proxy reachability, request `http://<dind-ip>:18789/healthz` from the
+proxy host; expect HTTP 200. Macvlan normally isolates containers from the outer
+Docker host, so test the container IP from the proxy or another LAN machine.
 
-If DinD's default Docker DNS servers are unreachable, set
-`agents.defaults.sandbox.docker.dns` to reachable resolver addresses. Gateway DNS
-and DinD's registry access can be configured with a Compose override on
-`services.gateway.dns` and `services.dind.dns`, respectively.
+DinD creates `/run/dind/docker.sock` with group `DOCKER_GID` (default 2375).
+The controllers, gateway, and CLI receive that supplementary group while running
+as UID/GID 1000. The inner services bind-mount `/run/dind` from DinD's filesystem;
+using a new inner named volume there would select a different, empty directory.
+Sandboxes receive their workspace and configured environment, without the socket
+or gateway/provider credentials.
 
-After changing the sandbox image or settings, recreate the affected sandboxes
-with `docker compose run --rm cli sandbox recreate --all`; OpenClaw creates
-replacements on the next tool call.
+`OPENCLAW_USER_BASE` has the same absolute path on the outer host, inside DinD,
+and inside the gateway. Add matching mounts to DinD and the inner gateway for
+workspaces outside that directory. State and XDG data persist under that base;
+workspaces are writable by UID/GID 1000. Sandboxes use DinD's `bridge` network
+for outbound access. Their root filesystem is read-only, with temporary
+writable directories and resource limits. OpenClaw's separate browser sidecar is
+disabled because Playwright runs in the sandbox image.
 
-When moving an existing deployment from the host socket, recreate the gateway
-with this Compose configuration and pull the sandbox image into DinD. Existing
-sandbox containers on the outer daemon are not migrated; remove those old
-sandboxes separately after the replacement works. `DOCKER_SOCKET` is no longer
-used; `DOCKER_GID` selects the shared DinD socket's group.
+For custom DNS, configure `services.openclaw-dind.dns` in the outer stack for
+registry access, and `services.openclaw-gateway.dns` in the inner stack for the
+gateway. Sandbox DNS is configured through
+`agents.defaults.sandbox.docker.dns` in OpenClaw's deployed config. Set the
+sandbox network to `none` there if you want offline tools.
+
+DinD remains privileged and shares the host kernel. Its `dind-data` volume
+persists inner images, gateway containers, and sandboxes across service
+recreation and outer `docker compose down`. Removing that volume, including with
+`docker compose down --volumes`, deletes the inner daemon's images and containers.
+To stop the inner gateway alone, run the controller with `down`; the outer
+DinD service and its stored images remain.
+
+When migrating the previous sibling-gateway layout, stop and remove the old
+**outer** gateway and CLI containers first. Stop the old DinD container too
+before starting its renamed replacement; only one daemon may use its data
+directory at a time. Retain the application data and DinD storage. Replace the
+old outer gateway service with `openclaw-deploy`, add the
+new config file mounts, and deploy the inner stack using the commands above.
+Retain your existing DinD data and socket volume names or bind mounts when
+merging the renamed `openclaw-dind` service into a larger stack. Update a macvlan
+proxy backend from the old gateway IP to the DinD IP after deployment succeeds.
+`DOCKER_SOCKET` is unused; `DOCKER_GID` controls the shared DinD socket group.
 
 ## MCP configuration
 
@@ -245,6 +261,8 @@ dependencies.
 
 Pull requests targeting `main` build and smoke-test both images in separate matrix
 jobs, using the same base resolution, dependency refresh policy, and smoke tests.
+An additional Compose integration job tests the deployment against the published
+image pair. Publishing runs test the deployment with their actual candidates.
 These checks run for every PR update, including documentation changes, with read
 access to the repository and no registry logins, secrets, cache exports, or image
 pushes. New commits cancel older runs for the same PR without interrupting the
@@ -255,7 +273,7 @@ Publishing workflow:
 1. Require registry credentials and log in to GHCR and Forgejo before building; resolve each image's upstream base digest independently
 2. Build `Dockerfile.gateway` and `Dockerfile.sandbox` with their resolved bases and separate registry caches, loading both candidates locally
 3. Bypass the layer cache for the `gateway` and `sandbox` stages so APT, npm, and optional Python installation steps run again; reuse the sandbox's locked mise tool stage
-4. Test gateway startup and health, sandbox browser operation through the configured Playwright MCP, and both images' runtime tools and MCP configuration
+4. Test runtime tools and MCP configuration, then deploy both candidates inside DinD and run a sandboxed agent tool through a local model fixture
 5. Publish both candidates to GHCR after both builds and tests pass, then publish both to Forgejo
 
 Schedule: daily at 08:00 UTC + manual dispatch.
@@ -319,6 +337,21 @@ respond to `/healthz` and negotiate Docker Engine APIs 1.44 and 1.41 against loc
 fixtures; the sandbox must navigate and save a screenshot through
 its configured Playwright MCP. Both must run Node, npm, Python, and uv from a
 login shell. A failure in either candidate prevents publication of both images.
+
+Exercise the complete nested deployment locally with:
+
+```sh
+python3 tests/compose-smoke.py <gateway-image> <sandbox-image>
+```
+
+This test creates its own Compose project and volumes, transfers the supplied
+images into DinD, and validates gateway HTTP and the administration CLI. It
+reproduces the container identity failure with an outer gateway, then uses a
+local model fixture to make the nested gateway create a real sandbox and execute
+a tool against the workspace. It repeats that turn after recreating DinD to
+verify persistence and socket reconnection. No provider credentials are used;
+test containers and volumes are removed afterward. The test needs Docker,
+Compose, Python 3, and support for privileged DinD containers.
 
 ## Published tags
 

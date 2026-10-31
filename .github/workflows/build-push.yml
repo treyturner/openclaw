@@ -132,6 +132,16 @@ jobs:
           candidate-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
           role: sandbox
 
+      - name: Make room for the nested Docker image store
+        run: sudo rm -rf /usr/local/lib/android
+
+      - name: Test Compose deployment with both candidates
+        timeout-minutes: 20
+        env:
+          GATEWAY_CANDIDATE: ${{ env.GATEWAY_DOWNSTREAM_REF }}:${{ steps.gateway_refs.outputs.candidate_tag }}
+          SANDBOX_CANDIDATE: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
+        run: python3 tests/compose-smoke.py "$GATEWAY_CANDIDATE" "$SANDBOX_CANDIDATE"
+
       - name: Publish gateway to GHCR
         uses: ./.github/actions/publish
         with:
