@@ -30,9 +30,19 @@ RUN --mount=type=cache,target=/var/lib/apt,id=gateway-apt-lib,sharing=locked \
         ca-certificates \
         coreutils \
         curl \
+        dnsutils \
         jq \
+        iproute2 \
+        iputils-ping \
+        mtr-tiny \
+        net-tools \
+        netcat-openbsd \
         python3 \
+        tcpdump \
+        telnet \
+        traceroute \
         vim \
+        wget \
         yq \
         ${EXTRA_APT_PKGS} \
     && rm -rf /var/lib/apt/lists/*
