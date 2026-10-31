@@ -70,14 +70,24 @@ RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked
         ca-certificates \
         coreutils \
         curl \
+        dnsutils \
         ffmpeg \
         git \
         imagemagick \
+        iproute2 \
+        iputils-ping \
         jq \
+        mtr-tiny \
+        net-tools \
+        netcat-openbsd \
         python3 \
         python3-venv \
         ripgrep \
         rsync \
+        tcpdump \
+        telnet \
+        traceroute \
+        wget \
         yq \
         ${EXTRA_APT_PKGS} \
     && rm -rf /var/lib/apt/lists/*
