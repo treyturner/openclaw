@@ -4,3 +4,4 @@ min_version = "2026.10.17"
 node = "26"
 # Verify Astral's GitHub release attestations when generating the lockfile.
 "github:astral-sh/uv" = "0.13.5"
+gh = "2.103"

@@ -65,8 +65,8 @@ with tempfile.TemporaryDirectory(prefix=project + '-') as scratch:
                 files.addfile(member, io.BytesIO(content))
         call(['docker', 'run', '--rm', '--interactive', '--network', 'none', '--entrypoint', 'sh',
               '--mount', f'type=volume,src={fixture_volume},dst=/fixtures', cli_image, '-eu', '-c',
-              'tar -xf - -C /fixtures; mkdir -p /fixtures/data/workspace; '
-              'chown -R 1000:1000 /fixtures/data; chmod 0700 /fixtures/data /fixtures/data/config /fixtures/data/workspace; '
+              'tar -xf - -C /fixtures; mkdir -p /fixtures/data/workspace /fixtures/data/tmp; '
+              'chown -R 1000:1000 /fixtures/data; chmod 0700 /fixtures/data /fixtures/data/config /fixtures/data/workspace /fixtures/data/tmp; '
               'chmod 0600 /fixtures/data/config/openclaw.json'], input=archive.getvalue())
         config = json.loads(call(render + ['--profile', 'cli', 'config', '--format', 'json'], env=base_env))
         # The daemon may be remote from the checkout. Copy only the two nonsecret
@@ -130,6 +130,11 @@ with tempfile.TemporaryDirectory(prefix=project + '-') as scratch:
         print(call(bad_args, input=probe, timeout=150), flush=True)
         print('Running an actual model/tool turn in the nested gateway...', flush=True)
         print(inner('exec', '-T', 'openclaw-gateway', 'node', '--input-type=module', input=probe, timeout=150), flush=True)
+        print('Checking setup inference with tmpfs and bind-backed temporary workspaces...', flush=True)
+        print(inner('exec', '-T', '--env', 'TMPDIR=/tmp', '--env', 'OPENCLAW_SMOKE_SETUP=tmpfs',
+                    'openclaw-gateway', 'node', '--input-type=module', input=probe, timeout=150), flush=True)
+        print(inner('exec', '-T', '--env', 'OPENCLAW_SMOKE_SETUP=bind',
+                    'openclaw-gateway', 'node', '--input-type=module', input=probe, timeout=150), flush=True)
         print('Recreating DinD and checking persistence...', flush=True)
         dc('up', '--detach', '--no-deps', '--force-recreate', '--wait', '--wait-timeout', '120', 'openclaw-dind', timeout=150)
         inner('up', '--detach', '--wait', '--wait-timeout', '180', '--pull', 'never', timeout=210)

@@ -13,7 +13,8 @@ x-runtime: &runtime
     DOCKER_HOST: unix:///run/dind/docker.sock
     OPENCLAW_STATE_DIR: ${OPENCLAW_USER_BASE:?Set OPENCLAW_USER_BASE to an absolute host path}/config
     OPENCLAW_CONFIG_PATH: ${OPENCLAW_USER_BASE}/config/openclaw.json
-    OPENCLAW_WORKSPACE_DIR: ${OPENCLAW_USER_BASE}/workspace
+    OPENCLAW_WORKSPACE_DIR: ${OPENCLAW_USER_BASE}/workspace    
+    TMPDIR: ${OPENCLAW_USER_BASE}/tmp
     OPENCLAW_SANDBOX_IMAGE: ${OPENCLAW_SANDBOX_IMAGE:-ghcr.io/treyturner/openclaw-sandbox:latest}
     OPENCLAW_CONTROL_UI_ORIGIN: ${OPENCLAW_CONTROL_UI_ORIGIN:-http://127.0.0.1:18789}
     XDG_CONFIG_HOME: ${OPENCLAW_USER_BASE}/xdg/config

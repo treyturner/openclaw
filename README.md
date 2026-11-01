@@ -14,6 +14,7 @@ installed by mise during the build. Together they provide:
   - curl
   - docker cli for sandboxing
   - ffmpeg
+  - gh
   - git
   - imagemagick
   - jq
@@ -21,7 +22,18 @@ installed by mise during the build. Together they provide:
   - python3-venv
   - rsync
   - vim
+  - wget
   - yq
+- Network debugging:
+  - dnsutils
+  - iputils-ping
+  - iproute2
+  - mtr-tiny
+  - net-tools
+  - netcat-openbsd
+  - tcpdump
+  - telnet
+  - traceroute
 
 The sandbox runs as `sandbox` (UID/GID 1000), with `HOME=/home/sandbox` and
 `/workspace` as its working directory. Additional package installation runs from
@@ -87,7 +99,8 @@ Run Compose on a Linux Docker host that supports privileged DinD containers.
    sudo install -d -m 0700 -o 1000 -g 1000 \
      /mnt/cache/appdata/openclaw \
      /mnt/cache/appdata/openclaw/config \
-     /mnt/cache/appdata/openclaw/workspace
+     /mnt/cache/appdata/openclaw/workspace \
+     /mnt/cache/appdata/openclaw/tmp
    ```
 
 3. For a fresh deployment, copy `config/openclaw.example.json` to
@@ -174,6 +187,15 @@ workspaces are writable by UID/GID 1000. Sandboxes use DinD's `bridge` network
 for outbound access. Their root filesystem is read-only, with temporary
 writable directories and resource limits. OpenClaw's separate browser sidecar is
 disabled because Playwright runs in the sandbox image.
+
+The inner gateway and CLI set `TMPDIR` to `<OPENCLAW_USER_BASE>/tmp`. OpenClaw's
+agent setup runs an inference check in a temporary workspace, which must also
+be backed by a host bind mount. Leaving that workspace under the gateway's
+`/tmp` tmpfs causes an unsupported-mount error. For existing deployments, create
+the `tmp` directory with UID/GID 1000 and mode 0700, update `compose.inner.yaml`,
+then run `docker compose run --rm openclaw-deploy up --detach --wait` to recreate
+the gateway. These temporary files use disk space and can survive a restart;
+remove abandoned files only while OpenClaw is stopped.
 
 For custom DNS, configure `services.openclaw-dind.dns` in the outer stack for
 registry access, and `services.openclaw-gateway.dns` in the inner stack for the
@@ -348,7 +370,9 @@ This test creates its own Compose project and volumes, transfers the supplied
 images into DinD, and validates gateway HTTP and the administration CLI. It
 reproduces the container identity failure with an outer gateway, then uses a
 local model fixture to make the nested gateway create a real sandbox and execute
-a tool against the workspace. It repeats that turn after recreating DinD to
+a tool against the workspace. It also runs OpenClaw's real setup inference check,
+first reproducing the tmpfs failure and then verifying the bind-backed `TMPDIR`.
+It repeats the tool turn after recreating DinD to
 verify persistence and socket reconnection. No provider credentials are used;
 test containers and volumes are removed afterward. The test needs Docker,
 Compose, Python 3, and support for privileged DinD containers.
