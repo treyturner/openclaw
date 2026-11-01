@@ -90,6 +90,7 @@ RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked
         wget \
         yq \
         ${EXTRA_APT_PKGS} \
+    # cleanup
     && rm -rf /var/lib/apt/lists/*
 
 # Keep core MCP tools separate from optional npm packages.
