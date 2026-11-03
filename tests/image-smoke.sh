@@ -16,10 +16,11 @@ case "$role" in
     sandbox) runtime_home=/home/sandbox ;;
 esac
 
+# Match the executable workspace bind used by OpenClaw for compiler smoke checks.
 docker run --rm --init --interactive --read-only --network none \
     --cap-drop ALL --security-opt no-new-privileges \
     --tmpfs /tmp:rw,nosuid,nodev,size=512m \
-    --tmpfs /workspace:rw,nosuid,nodev,uid=1000,gid=1000,size=128m \
+    --tmpfs /workspace:rw,exec,nosuid,nodev,uid=1000,gid=1000,size=128m \
     --tmpfs "$runtime_home:rw,nosuid,nodev,uid=1000,gid=1000,size=32m" \
     --env "TEST_IMAGE_ROLE=$role" \
     --env "TEST_NPM_EXTRAS=${3:-}" \

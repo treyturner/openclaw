@@ -54,6 +54,45 @@ const tools = await command('bash', ['-lc',
 assert.equal(tools.code, 0, tools.stdout + tools.stderr);
 console.log(`${role} runtime tools:\n${tools.stdout.trim()}`);
 
+if (role === 'sandbox') {
+  // Tools must be on plain PATH without activation or files hidden by HOME mounts.
+  const sandboxTools = [
+    'gh --version', 'coder version', 'ssh -V', 'cc --version', 'c++ --version',
+    'make --version', 'pkg-config --version', 'zip -v', 'unzip -v',
+    'fd --version', 'fdfind --version', 'shellcheck --version',
+  ].join(' && ');
+  for (const cwd of ['/tmp', '/workspace', process.env.HOME]) {
+    for (const [program, args] of [['gh', ['--version']], ['coder', ['version']], ['fd', ['--version']]]) {
+      const direct = await command(program, args, { cwd });
+      assert.equal(direct.code, 0, `${cwd}: ${direct.stdout}${direct.stderr}`);
+    }
+    for (const shell of ['-c', '-lc']) {
+      const result = await command('bash', [shell, sandboxTools], { cwd });
+      assert.equal(result.code, 0, `${cwd} ${shell}: ${result.stdout}${result.stderr}`);
+    }
+  }
+  console.log('PASS sandbox: development tools, gh, fd and Coder work across runtime directories and shell modes');
+
+  const toolDir = '/workspace/.sandbox-tools-smoke';
+  await mkdir(toolDir);
+  await writeFile(`${toolDir}/main.c`, '#include <stdio.h>\nint main(void) { puts("c-ok"); return 0; }\n');
+  await writeFile(`${toolDir}/main.cpp`, '#include <iostream>\nint main() { std::cout << "cpp-ok\\n"; }\n');
+  await writeFile(`${toolDir}/Makefile`, 'all:\n\t$(CC) main.c -o smoke-c\n\t$(CXX) main.cpp -o smoke-cpp\n');
+  await writeFile(`${toolDir}/payload.txt`, 'archive-ok\n');
+  await writeFile(`${toolDir}/check.sh`, '#!/bin/sh\nprintf "%s\\n" "shell-ok"\n');
+  const development = await command('bash', ['-ec', [
+    'make --no-print-directory',
+    'test "$(./smoke-c)" = c-ok',
+    'test "$(./smoke-cpp)" = cpp-ok',
+    'zip -q smoke.zip payload.txt',
+    'test "$(unzip -p smoke.zip payload.txt)" = archive-ok',
+    'fd --fixed-strings payload.txt . | grep -q payload.txt',
+    'shellcheck check.sh',
+  ].join('\n')], { cwd: toolDir });
+  assert.equal(development.code, 0, development.stdout + development.stderr);
+  console.log('PASS sandbox: C/C++ builds, zip round-trip, file search and shell lint work without network access');
+}
+
 if (process.env.TEST_NPM_EXTRAS === '--npm-extras') {
   // The fixture deliberately installs an older mcporter as an optional global
   // package. Core tools must still win, including after login PATH resets.

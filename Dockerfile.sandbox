@@ -30,13 +30,14 @@ COPY --chmod=0644 sandbox/mise.toml /mise/config.toml
 COPY --chmod=0644 sandbox/mise.lock /mise/mise.lock
 RUN --mount=type=cache,target=/tmp/.cache/mise,id=mise-cache,sharing=locked \
     mise install --locked \
-    && for tool in node npx uv uvx; do \
+    && for tool in node npx uv uvx gh; do \
         ln -s "$(mise which "$tool")" "/usr/local/bin/$tool"; \
     done \
     && ln -s "$(mise where node)/lib/node_modules/npm/bin/npm-cli.js" /usr/local/bin/npm \
     && node --version \
     && npm --version \
-    && uv --version
+    && uv --version \
+    && gh --version
 
 USER sandbox
 WORKDIR /workspace
@@ -67,10 +68,12 @@ RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         bash \
+        build-essential \
         ca-certificates \
         coreutils \
         curl \
         dnsutils \
+        fd-find \
         ffmpeg \
         git \
         imagemagick \
@@ -80,18 +83,32 @@ RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked
         mtr-tiny \
         net-tools \
         netcat-openbsd \
+        openssh-client \
+        pkg-config \
         python3 \
         python3-venv \
         ripgrep \
         rsync \
+        shellcheck \
         tcpdump \
         telnet \
         traceroute \
+        unzip \
         wget \
         yq \
+        zip \
         ${EXTRA_APT_PKGS} \
     # cleanup
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd
+
+# Install the CLI served by this deployment, matching its Coder server version.
+# Keep the binary outside HOME and remove the installer's downloaded copy.
+RUN install -d /tmp/coder-install \
+    && curl -fsSL https://coder.treyturner.info/install.sh -o /tmp/coder-install/install.sh \
+    && XDG_CACHE_HOME=/tmp/coder-install sh /tmp/coder-install/install.sh --prefix=/usr/local \
+    && coder version \
+    && rm -rf /tmp/coder-install
 
 # Keep core MCP tools separate from optional npm packages.
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \

@@ -11,19 +11,25 @@ installed by mise during the build. Together they provide:
 - Chromium in the sandbox, installed by the matching Playwright version
 - Commonly needed workflow utilities:
   - bash with `openclaw` completion
+  - build-essential (C/C++ compilers and make) in the sandbox
+  - Coder CLI from the self-hosted instance in the sandbox
   - curl
   - docker cli for sandboxing
+  - fd-find (`fd` and `fdfind`) in the sandbox
   - ffmpeg
   - gh
   - git
   - imagemagick
   - jq
   - openssh-client
+  - pkg-config in the sandbox
   - python3-venv
   - rsync
+  - shellcheck in the sandbox
   - vim
   - wget
   - yq
+  - zip and unzip in the sandbox
 - Network debugging:
   - dnsutils
   - iputils-ping
@@ -62,6 +68,13 @@ use `mise install --locked`. Tools live under `/mise`, outside the user's home
 and workspace, with direct links in `/usr/local/bin` so commands work without
 shell activation or runtime downloads. The gateway keeps upstream OpenClaw's
 Node runtime.
+
+The sandbox installs the Coder CLI using
+`https://coder.treyturner.info/install.sh`, which downloads the CLI matching that
+deployment's server version into `/usr/local/bin/coder`. Publishing builds
+refresh it along with the sandbox dependency stage, so rebuild after upgrading
+the Coder server. Builds require access to that instance. Coder login and
+credentials are configured at runtime.
 
 To update sandbox tools, edit `sandbox/mise.toml` as needed, then regenerate the
 lockfile with mise 2026.10.17 or later and review the resulting versions:
@@ -139,12 +152,36 @@ docker compose run --rm openclaw-deploy ps
 docker compose run --rm openclaw-deploy logs --tail 100 openclaw-gateway
 docker compose run --rm openclaw-deploy exec openclaw-gateway \
   curl -i http://127.0.0.1:18789/healthz
-docker compose run --rm openclaw-cli sandbox recreate --all
 ```
 
 The inner CLI shares the gateway's network and PID namespaces so loopback
 reaches the gateway and shared-state ownership checks can identify its process.
 The controller preserves interactive input for commands such as onboarding.
+
+`sandbox recreate` requires exclusive offline state ownership in OpenClaw
+2026.10.9. Stop the inner gateway, keep DinD running, and use the gateway service
+definition for a one-off maintenance container:
+
+```sh
+docker compose run --rm openclaw-deploy stop --timeout 60 openclaw-gateway
+docker compose run --rm -T openclaw-deploy \
+  run --rm -T --no-deps openclaw-gateway sandbox recreate --all --force
+docker compose run --rm openclaw-deploy up --detach --wait openclaw-gateway
+docker compose run --rm openclaw-cli sandbox list
+```
+
+Run the start command after maintenance even if recreation fails. The one-off
+container runs the CLI instead of starting another gateway and does not publish
+the gateway's ports. The regular `openclaw-cli` service shares the running
+gateway's namespaces and depends on its health, so it cannot be used for this
+offline operation. `--force` skips confirmation; it does not bypass ownership.
+Recreation removes sandbox containers; OpenClaw creates replacements when the
+agents next need them. Host bind-mounted workspaces remain in place.
+
+In this deployment, `gateway status` may report no supported service manager
+and a stopped native service while its connectivity check succeeds. Docker
+Compose owns the gateway process; use the deployment controller for lifecycle
+commands. See the [sandbox CLI ownership requirements](https://docs.openclaw.ai/cli/sandbox).
 
 The gateway uses `--bind lan`, which listens on `0.0.0.0` inside its container.
 The inner stack publishes gateway port 18789 on **DinD's interfaces**. The outer
