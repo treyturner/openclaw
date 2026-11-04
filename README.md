@@ -10,8 +10,10 @@ installed by mise during the build. Together they provide:
     - TickTick via its [official remote MCP service](https://help.ticktick.com/articles/7438129581631995904)
 - Chromium in the sandbox, installed by the matching Playwright version
 - Commonly needed workflow utilities:
+  - 1Password CLI (`op`) in both images
   - bash with `openclaw` completion
   - build-essential (C/C++ compilers and make) in the sandbox
+  - Claude Code CLI (`claude`) in both images
   - Coder CLI from the self-hosted instance in the sandbox
   - curl
   - docker cli for sandboxing
@@ -68,6 +70,16 @@ use `mise install --locked`. Tools live under `/mise`, outside the user's home
 and workspace, with direct links in `/usr/local/bin` so commands work without
 shell activation or runtime downloads. The gateway keeps upstream OpenClaw's
 Node runtime.
+
+Both images install 1Password CLI and Claude Code system-wide from their signed
+vendor APT repositories. 1Password follows its stable repository; Claude Code
+follows its `latest` repository. The shared installer checks the vendor signing
+key fingerprints before registering either repository. Their binaries survive
+HOME and workspace mounts and work without shell activation. Image rebuilds
+refresh these packages; Claude's package-managed installation does not
+auto-update itself. Configure authentication at runtime. See the
+[1Password installation instructions](https://developer.1password.com/docs/cli/get-started/)
+and [Claude Code package-manager setup](https://code.claude.com/docs/en/setup#install-with-linux-package-managers).
 
 The sandbox installs the Coder CLI using
 `https://coder.treyturner.info/install.sh`, which downloads the CLI matching that
@@ -348,11 +360,12 @@ later failure can leave only some tags updated. Rerun the workflow to retry the
 pair; the rebuild may include newer upstream images or dependencies. New runs
 wait for the active run instead of automatically cancelling publication midway.
 
-The shared `.dockerignore` allows only the two mcporter configuration files and
-the sandbox mise manifest and lockfile into the build context. Git history,
-deployment files, tests, and local files are excluded. Add an explicit exception
-when a Dockerfile needs to copy a new local input. Docker sends the selected
-Dockerfile separately, as described in its [build context documentation](https://docs.docker.com/build/concepts/context/#dockerignore-files).
+The shared `.dockerignore` allows only the two mcporter configuration files,
+the sandbox mise manifest and lockfile, and the shared CLI installer into the
+build context. Git history, deployment files, tests, and local files are excluded.
+Add an explicit exception when a Dockerfile needs to copy a new local input.
+Docker sends the selected Dockerfile separately, as described in its
+[build context documentation](https://docs.docker.com/build/concepts/context/#dockerignore-files).
 
 The dependency stages refresh APT indexes and upgrade installed Debian packages
 before adding tools. Their APT caches are separate and locked. Cache mounts still

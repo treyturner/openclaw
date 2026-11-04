@@ -4,3 +4,4 @@
 !config/mcporter.sandbox.json
 !sandbox/mise.toml
 !sandbox/mise.lock
+!scripts/install-shared-clis.sh
