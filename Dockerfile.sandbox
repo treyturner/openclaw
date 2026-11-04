@@ -76,6 +76,7 @@ RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked
         fd-find \
         ffmpeg \
         git \
+        gpg \
         imagemagick \
         iproute2 \
         iputils-ping \
@@ -101,6 +102,12 @@ RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked
     # cleanup
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd
+
+# Shared native CLIs live outside HOME and use signed vendor APT repositories.
+COPY --chmod=0755 scripts/install-shared-clis.sh /tmp/install-shared-clis.sh
+RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,id=sandbox-apt-lib,sharing=locked \
+    /tmp/install-shared-clis.sh && rm /tmp/install-shared-clis.sh
 
 # Install the CLI served by this deployment, matching its Coder server version.
 # Keep the binary outside HOME and remove the installer's downloaded copy.

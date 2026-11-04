@@ -57,6 +57,12 @@ RUN --mount=type=cache,target=/var/lib/apt,id=gateway-apt-lib,sharing=locked \
     # cleanup
     && rm -rf /var/lib/apt/lists/*
 
+# Shared native CLIs live outside HOME and use signed vendor APT repositories.
+COPY --chmod=0755 scripts/install-shared-clis.sh /tmp/install-shared-clis.sh
+RUN --mount=type=cache,target=/var/lib/apt,id=gateway-apt-lib,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,id=gateway-apt-cache,sharing=locked \
+    /tmp/install-shared-clis.sh && rm /tmp/install-shared-clis.sh
+
 # The gateway controls the sandbox daemon using only the official Docker CLI.
 COPY --from=docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb /usr/local/bin/docker /usr/local/bin/docker
 

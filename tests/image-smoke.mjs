@@ -54,6 +54,22 @@ const tools = await command('bash', ['-lc',
 assert.equal(tools.code, 0, tools.stdout + tools.stderr);
 console.log(`${role} runtime tools:\n${tools.stdout.trim()}`);
 
+// Shared CLIs must work as UID 1000 with empty HOME/workspace mounts and no
+// network, including direct process launches that do not load shell profiles.
+for (const cwd of ['/tmp', '/workspace', process.env.HOME]) {
+  for (const program of ['op', 'claude']) {
+    const result = await command(program, ['--version'], { cwd });
+    assert.equal(result.code, 0, `${cwd} ${program}: ${result.stdout}${result.stderr}`);
+    assert.match(result.stdout, /\d+\.\d+\.\d+/);
+    if (cwd === '/tmp') console.log(`${role} ${program}: ${result.stdout.trim()}`);
+  }
+  for (const shell of ['-c', '-lc']) {
+    const result = await command('bash', [shell, 'op --version && claude --version'], { cwd });
+    assert.equal(result.code, 0, `${cwd} ${shell}: ${result.stdout}${result.stderr}`);
+  }
+}
+console.log(`PASS ${role}: 1Password and Claude Code work across runtime directories and shell modes`);
+
 if (role === 'sandbox') {
   // Tools must be on plain PATH without activation or files hidden by HOME mounts.
   const sandboxTools = [
