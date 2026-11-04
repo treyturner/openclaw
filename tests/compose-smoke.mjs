@@ -56,6 +56,12 @@ try {
   // sandbox mount translation and inference path are covered without a UI.
   const setupScript = `
     import { verifySetupInference } from '/app/dist/system-agent/setup-inference.js';
+    import * as configRuntime from '/app/dist/config/config.js';
+    // New runners require preparation before setup inference; PR CI also uses
+    // older published images that predate this API. Preparation errors must fail.
+    if (typeof configRuntime.captureRuntimeConfigAsyncReader === 'function') {
+      await configRuntime.captureRuntimeConfigAsyncReader()();
+    }
     const result = await verifySetupInference({ agentId: 'main', timeoutMs: 60000,
       runtime: { log: () => {}, error: console.error } });
     console.log(JSON.stringify(result));
