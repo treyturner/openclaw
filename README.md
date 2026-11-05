@@ -24,10 +24,12 @@ installed by mise during the build. Together they provide:
   - imagemagick
   - jq
   - openssh-client
+  - OpenAI Whisper (`whisper`)
   - pkg-config in the sandbox
   - python3-venv
   - rsync
   - shellcheck in the sandbox
+  - tmux
   - vim
   - wget
   - yq
@@ -81,6 +83,34 @@ auto-update itself. Configure authentication at runtime. See the
 [1Password installation instructions](https://developer.1password.com/docs/cli/get-started/)
 and [Claude Code package-manager setup](https://code.claude.com/docs/en/setup#install-with-linux-package-managers).
 
+Both images install [OpenAI Whisper](https://github.com/openai/whisper) in its own
+Python environment at `/opt/whisper`, with CPU-only PyTorch and `ffmpeg`. The
+`whisper` command works on normal and login-shell `PATH`, independently of mounted
+homes and optional Python packages. Image rebuilds refresh Whisper and its
+dependencies; model weights download on first use and are not baked into images.
+
+The command defaults to the smaller `base` model for CPU use. Set `WHISPER_MODEL`
+or pass `--model` to select another model; larger models can require raising the
+sandbox's default 1 GiB memory limit. The wrapper supplies `--model_dir` from
+`WHISPER_MODEL_DIR`, falling back to `$HOME/.cache/whisper`; an explicit
+`--model_dir` takes precedence. Model caches persist as follows:
+
+- The inner gateway and administration CLI use `<OPENCLAW_USER_BASE>/cache/whisper`
+  through their existing data bind mount.
+- Sandboxes use `/workspace/.cache/whisper`, under their persistent writable
+  workspace. Each workspace has its own cache. If you make a workspace read-only,
+  provide a separate writable persistent mount and set `WHISPER_MODEL_DIR` in
+  `agents.defaults.sandbox.docker.env` to its container path.
+
+The gateway installation satisfies the bundled skill's binary check; sandboxed
+agents execute the skill's commands in the sandbox. Automatic inbound audio
+transcription runs in the gateway. Installing the CLI does not force local audio
+selection: configure an explicit Whisper CLI entry in `tools.media.models` if
+you want local transcription instead of automatic provider selection. Such an
+entry's `--model` argument overrides the wrapper's default. See OpenClaw's
+[sandboxed skill requirements](https://docs.openclaw.ai/tools/skills#sandboxing-notes)
+and [audio configuration](https://docs.openclaw.ai/nodes/audio).
+
 The sandbox installs the Coder CLI using
 `https://coder.treyturner.info/install.sh`, which downloads the CLI matching that
 deployment's server version into `/usr/local/bin/coder`. Publishing builds
@@ -125,6 +155,7 @@ Run Compose on a Linux Docker host that supports privileged DinD containers.
      /mnt/cache/appdata/openclaw \
      /mnt/cache/appdata/openclaw/config \
      /mnt/cache/appdata/openclaw/workspace \
+     /mnt/cache/appdata/openclaw/cache/whisper \
      /mnt/cache/appdata/openclaw/tmp
    ```
 
@@ -361,9 +392,10 @@ pair; the rebuild may include newer upstream images or dependencies. New runs
 wait for the active run instead of automatically cancelling publication midway.
 
 The shared `.dockerignore` allows only the two mcporter configuration files,
-the sandbox mise manifest and lockfile, and the shared CLI installer into the
-build context. Git history, deployment files, tests, and local files are excluded.
-Add an explicit exception when a Dockerfile needs to copy a new local input.
+the sandbox mise manifest and lockfile, the shared CLI installer, and the Whisper
+wrapper into the build context. Git history, deployment files, tests, and local
+files are excluded. Add an explicit exception when a Dockerfile needs to copy a
+new local input.
 Docker sends the selected Dockerfile separately, as described in its
 [build context documentation](https://docs.docker.com/build/concepts/context/#dockerignore-files).
 
@@ -409,6 +441,9 @@ respond to `/healthz` and negotiate Docker Engine APIs 1.44 and 1.41 against loc
 fixtures; the sandbox must navigate and save a screenshot through
 its configured Playwright MCP. Both must run Node, npm, Python, and uv from a
 login shell. A failure in either candidate prevents publication of both images.
+Both also launch Whisper directly and through normal and login shells,
+decode audio with `ffmpeg`, and run a miniature random Whisper model on CPU
+without downloading weights.
 
 Exercise the complete nested deployment locally with:
 
