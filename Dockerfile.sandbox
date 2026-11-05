@@ -93,6 +93,7 @@ RUN --mount=type=cache,target=/var/cache/apt,id=sandbox-apt-cache,sharing=locked
         shellcheck \
         tcpdump \
         telnet \
+        tmux \
         traceroute \
         unzip \
         wget \
@@ -155,6 +156,12 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
         uv pip install --python /opt/python/bin/python ${EXTRA_PIP_PKGS}; \
     fi
 
+# Keep local transcription independent of optional Python tools and HOME mounts.
+RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache,sharing=locked \
+    uv venv --python /usr/bin/python3 /opt/whisper \
+    && uv pip install --python /opt/whisper/bin/python --torch-backend cpu openai-whisper
+COPY --chmod=0755 scripts/whisper /usr/local/bin/whisper
+
 # Readable defaults survive HOME mounts and work from every directory.
 RUN install -d -m 0755 /etc/mcporter
 COPY --chmod=0644 config/mcporter.sandbox.json /etc/mcporter/mcporter.json
@@ -165,6 +172,7 @@ ENV MCPORTER_CONFIG=/etc/mcporter/mcporter.json \
 USER sandbox
 
 ENV HOME=/home/sandbox \
+    WHISPER_MODEL_DIR=/workspace/.cache/whisper \
     XDG_CACHE_HOME=/tmp/.cache
 
 WORKDIR /workspace

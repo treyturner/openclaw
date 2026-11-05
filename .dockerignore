@@ -5,3 +5,4 @@
 !sandbox/mise.toml
 !sandbox/mise.lock
 !scripts/install-shared-clis.sh
+!scripts/whisper

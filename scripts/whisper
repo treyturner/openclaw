@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+# CPU-friendly defaults; explicit CLI flags later in "$@" take precedence.
+# Keep model weights out of ephemeral XDG caches and the image's read-only root.
+exec /opt/whisper/bin/whisper \
+    --model "${WHISPER_MODEL:-base}" \
+    --model_dir "${WHISPER_MODEL_DIR:-${HOME:?Set HOME or WHISPER_MODEL_DIR}/.cache/whisper}" \
+    "$@"

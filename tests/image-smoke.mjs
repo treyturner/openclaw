@@ -70,6 +70,49 @@ for (const cwd of ['/tmp', '/workspace', process.env.HOME]) {
 }
 console.log(`PASS ${role}: 1Password and Claude Code work across runtime directories and shell modes`);
 
+// Import the full speech stack and exercise ffmpeg plus CPU model operations
+// without downloading weights or contacting a transcription provider.
+for (const [program, args, cwd] of [
+  ['whisper', ['--help'], '/workspace'],
+  ['bash', ['-c', 'whisper --help'], '/tmp'],
+  ['bash', ['-lc', 'whisper --help'], process.env.HOME],
+]) {
+  const result = await command(program, args, { cwd });
+  assert.equal(result.code, 0, `${cwd} ${program}: ${result.stdout}${result.stderr}`);
+  assert.match(result.stdout, /--model_dir/);
+}
+const whisper = await command('/opt/whisper/bin/python', ['-c', `
+import importlib.metadata
+import wave
+import torch
+import whisper
+from whisper.model import ModelDimensions, Whisper
+
+assert torch.version.cuda is None, 'Expected CPU-only PyTorch'
+torch.set_num_threads(2)
+with wave.open('/tmp/whisper-smoke.wav', 'wb') as audio:
+    audio.setnchannels(1)
+    audio.setsampwidth(2)
+    audio.setframerate(16000)
+    audio.writeframes(bytes(3200))
+audio = whisper.load_audio('/tmp/whisper-smoke.wav')
+assert audio.shape == (1600,)
+mel = whisper.log_mel_spectrogram(whisper.pad_or_trim(audio))
+assert mel.shape == (80, 3000)
+# A miniature random model checks working inference operators, not accuracy.
+model = Whisper(ModelDimensions(n_mels=80, n_audio_ctx=1500, n_audio_state=16,
+    n_audio_head=2, n_audio_layer=1, n_vocab=51864, n_text_ctx=448,
+    n_text_state=16, n_text_head=2, n_text_layer=1))
+with torch.no_grad():
+    logits = model(mel.unsqueeze(0), torch.tensor([[50257]]))
+assert logits.shape == (1, 1, 51864)
+assert torch.isfinite(logits).all()
+print('Whisper', importlib.metadata.version('openai-whisper'), 'PyTorch', torch.__version__)
+`]);
+assert.equal(whisper.code, 0, whisper.stdout + whisper.stderr);
+console.log(whisper.stdout.trim());
+console.log(`PASS ${role}: Whisper CLI, audio decoding and CPU inference work offline with runtime mounts`);
+
 if (role === 'sandbox') {
   // Tools must be on plain PATH without activation or files hidden by HOME mounts.
   const sandboxTools = [
