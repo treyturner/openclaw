@@ -20,13 +20,11 @@ jobs:
       matrix:
         include:
           - role: gateway
-            upstream-ref: ghcr.io/openclaw/openclaw:latest
             cache-ref: ghcr.io/treyturner/openclaw:buildcache
           - role: sandbox
             upstream-ref: ghcr.io/jdx/mise:2026.10.17-debian
             cache-ref: ghcr.io/treyturner/openclaw-sandbox:buildcache
           - role: sandbox-browser
-            upstream-ref: debian:bookworm-slim
             cache-ref: ghcr.io/treyturner/openclaw-sandbox-browser:buildcache
     steps:
       - name: Checkout
@@ -37,10 +35,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
 
+      - name: Test base resolver
+        if: matrix.role == 'sandbox-browser'
+        run: python3 tests/resolve-base.py
+
       - name: Resolve base
         id: base
         uses: ./.github/actions/resolve/base
         with:
+          image-role: ${{ matrix.role }}
           upstream-image-ref: ${{ matrix.upstream-ref }}
 
       - name: Build candidate
@@ -49,7 +52,9 @@ jobs:
           context: .
           file: Dockerfile.${{ matrix.role }}
           build-args: |
-            BASE_REF=${{ matrix.upstream-ref }}@${{ steps.base.outputs.upstream_digest }}
+            BASE_REF=${{ steps.base.outputs.base_ref }}
+            UPSTREAM_TAG=${{ steps.base.outputs.upstream_version }}
+            BROWSER_CONTRACT=${{ steps.base.outputs.browser_contract }}
           pull: true
           no-cache-filters: ${{ matrix.role }}
           cache-from: type=registry,ref=${{ matrix.cache-ref }}

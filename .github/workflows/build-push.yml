@@ -21,11 +21,9 @@ jobs:
       contents: read
       packages: write
     env:
-      GATEWAY_UPSTREAM_REF: ghcr.io/openclaw/openclaw:latest
       SANDBOX_UPSTREAM_REF: ghcr.io/jdx/mise:2026.10.17-debian
       GATEWAY_DOWNSTREAM_REF: ghcr.io/treyturner/openclaw
       SANDBOX_DOWNSTREAM_REF: ghcr.io/treyturner/openclaw-sandbox
-      BROWSER_UPSTREAM_REF: debian:bookworm-slim
       BROWSER_DOWNSTREAM_REF: ghcr.io/treyturner/openclaw-sandbox-browser
     steps:
       - name: Checkout
@@ -62,19 +60,20 @@ jobs:
         id: gateway_base
         uses: ./.github/actions/resolve/base
         with:
-          upstream-image-ref: ${{ env.GATEWAY_UPSTREAM_REF }}
+          image-role: gateway
 
       - name: Resolve sandbox base
         id: sandbox_base
         uses: ./.github/actions/resolve/base
         with:
+          image-role: sandbox
           upstream-image-ref: ${{ env.SANDBOX_UPSTREAM_REF }}
 
-      - name: Resolve browser base
+      - name: Resolve release-matched browser base
         id: browser_base
         uses: ./.github/actions/resolve/base
         with:
-          upstream-image-ref: ${{ env.BROWSER_UPSTREAM_REF }}
+          image-role: sandbox-browser
 
       - name: Compute gateway image refs
         id: gateway_refs
@@ -101,7 +100,7 @@ jobs:
         uses: ./.github/actions/compute/image-refs
         with:
           upstream-short-digest: ${{ steps.browser_base.outputs.upstream_short_digest }}
-          upstream-version: 2026.11.1
+          upstream-version: ${{ steps.browser_base.outputs.upstream_version }}
           downstream-repos: |
             ${{ env.BROWSER_DOWNSTREAM_REF }}
             forgejo.treyturner.info/treyturner/openclaw-sandbox-browser
@@ -112,7 +111,7 @@ jobs:
           context: .
           file: Dockerfile.gateway
           build-args: |
-            BASE_REF=${{ env.GATEWAY_UPSTREAM_REF }}@${{ steps.gateway_base.outputs.upstream_digest }}
+            BASE_REF=${{ steps.gateway_base.outputs.base_ref }}
           pull: true
           no-cache-filters: gateway
           cache-from: type=registry,ref=${{ env.GATEWAY_DOWNSTREAM_REF }}:buildcache
@@ -127,7 +126,7 @@ jobs:
           context: .
           file: Dockerfile.sandbox
           build-args: |
-            BASE_REF=${{ env.SANDBOX_UPSTREAM_REF }}@${{ steps.sandbox_base.outputs.upstream_digest }}
+            BASE_REF=${{ steps.sandbox_base.outputs.base_ref }}
           pull: true
           no-cache-filters: sandbox
           cache-from: type=registry,ref=${{ env.SANDBOX_DOWNSTREAM_REF }}:buildcache
@@ -142,7 +141,9 @@ jobs:
           context: .
           file: Dockerfile.sandbox-browser
           build-args: |
-            BASE_REF=${{ env.BROWSER_UPSTREAM_REF }}@${{ steps.browser_base.outputs.upstream_digest }}
+            BASE_REF=${{ steps.browser_base.outputs.base_ref }}
+            UPSTREAM_TAG=${{ steps.browser_base.outputs.upstream_version }}
+            BROWSER_CONTRACT=${{ steps.browser_base.outputs.browser_contract }}
           pull: true
           no-cache-filters: sandbox-browser
           cache-from: type=registry,ref=${{ env.BROWSER_DOWNSTREAM_REF }}:buildcache

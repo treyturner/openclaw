@@ -1,12 +1,21 @@
 name: Resolve base
-description: Resolve an upstream image to its digest and version
+description: Resolve an upstream image or a release-matched OpenClaw image base
 
 inputs:
   upstream-image-ref:
     description: "Fully qualified upstream image ref (`registry.example.com/owner/repo:tag`)"
-    required: true
+    required: false
+  image-role:
+    description: "gateway or sandbox-browser uses .github/openclaw-version; sandbox uses upstream-image-ref"
+    required: false
 
 outputs:
+  base_ref:
+    description: "Complete digest-pinned base reference to pass to the Docker build"
+    value: ${{ steps.upstream.outputs.base_ref }}
+  browser_contract:
+    description: "Release-matched browser contract label (sandbox-browser only)"
+    value: ${{ steps.upstream.outputs.browser_contract }}
   upstream_digest:
     description: "Full SHA digest of the upstream image ref"
     value: ${{ steps.upstream.outputs.digest }}
@@ -14,29 +23,88 @@ outputs:
     description: "Short (first 12 chars) digest of the upstream image ref"
     value: ${{ steps.upstream.outputs.short_digest }}
   upstream_version:
-    description: "Version of the upstream image ref as pulled from the opencontainers label"
+    description: "Browser release version, or the upstream image's opencontainers version label"
     value: ${{ steps.upstream.outputs.version }}
 
 runs:
   using: composite
   steps:
-    - name: Resolve current upstream base digest
+    - name: Resolve upstream base and release metadata
       id: upstream
       shell: bash -euo pipefail {0}
       env:
         UPSTREAM_IMAGE_REF: ${{ inputs.upstream-image-ref }}
+        IMAGE_ROLE: ${{ inputs.image-role }}
       run: |
-        DIGEST="$(docker buildx imagetools inspect "${UPSTREAM_IMAGE_REF}" --format '{{.Manifest.Digest}}')"
-        [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-          echo "Invalid upstream digest: $DIGEST" >&2
-          exit 1
-        }
-        echo "digest=${DIGEST}" | tee -a "$GITHUB_OUTPUT"
-        echo "short_digest=${DIGEST:7:12}" | tee -a "$GITHUB_OUTPUT"
+        set -euo pipefail
 
-        PINNED_REF="${UPSTREAM_IMAGE_REF%@*}@${DIGEST}"
-        docker pull "$PINNED_REF"
-        VERSION="$(docker image inspect "$PINNED_REF" --format '{{ with index .Config.Labels "org.opencontainers.image.version" }}{{ . }}{{ end }}')"
-        VERSION="${VERSION//$'\r'/}"
-        SAFE_VERSION="${VERSION//[\/:@ ]/-}"
-        echo "version=${SAFE_VERSION:-unknown}" | tee -a "$GITHUB_OUTPUT"
+        image_ref="${UPSTREAM_IMAGE_REF:-}"
+        role="${IMAGE_ROLE:-}"
+        contract=""
+        release=""
+
+        case "$role" in
+            gateway|sandbox-browser)
+                release="$(cat "$GITHUB_WORKSPACE/.github/openclaw-version")"
+                [[ "$release" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9.-]+)?$ ]] || {
+                    echo "Invalid OpenClaw release: $release" >&2
+                    exit 1
+                }
+                ;;
+            sandbox|"") ;;
+            *) echo "Unsupported image role: $role" >&2; exit 1 ;;
+        esac
+
+        if [[ "$role" == gateway ]]; then
+            image_ref="ghcr.io/openclaw/openclaw:$release"
+        elif [[ "$role" == sandbox-browser ]]; then
+            upstream_file="$(mktemp)"
+            trap 'rm -f "$upstream_file"' EXIT
+            curl -fsSL --retry 3 \
+                "https://raw.githubusercontent.com/openclaw/openclaw/v${release}/scripts/docker/sandbox/Dockerfile.browser" \
+                -o "$upstream_file"
+            image_ref="$(awk 'toupper($1) == "FROM" { print $2 }' "$upstream_file")"
+            [[ "$image_ref" =~ ^debian:[a-z0-9.-]+@sha256:[a-f0-9]{64}$ ]] || {
+                echo "Unexpected upstream browser base: $image_ref" >&2
+                exit 1
+            }
+            contract="$(sed -n 's/^LABEL org\.openclaw\.sandbox-browser\.contract="\([^"]*\)"$/\1/p' "$upstream_file")"
+            [[ "$contract" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || {
+                echo "Missing or ambiguous upstream browser contract: $contract" >&2
+                exit 1
+            }
+        fi
+
+        [[ -n "$image_ref" && "$image_ref" != *$'\n'* ]] || {
+            echo "An upstream image reference is required" >&2
+            exit 1
+        }
+
+        # Preserve upstream's exact pin, rather than resolving its mutable tag again.
+        if [[ "$image_ref" == *@* ]]; then
+            digest="${image_ref##*@}"
+        else
+            digest="$(docker buildx imagetools inspect "$image_ref" --format '{{.Manifest.Digest}}')"
+        fi
+        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Invalid upstream digest: $digest" >&2
+            exit 1
+        }
+        base_ref="${image_ref%@*}@${digest}"
+        docker pull "$base_ref"
+
+        if [[ "$role" == sandbox-browser ]]; then
+            version="$release"
+        else
+            version="$(docker image inspect "$base_ref" --format '{{ with index .Config.Labels "org.opencontainers.image.version" }}{{ . }}{{ end }}')"
+        fi
+        version="${version//$'\r'/}"
+        [[ "$version" != *$'\n'* ]] || { echo "Invalid multiline upstream version" >&2; exit 1; }
+        version="${version//[\/:@ ]/-}"
+        {
+            echo "base_ref=$base_ref"
+            echo "digest=$digest"
+            echo "short_digest=${digest:7:12}"
+            echo "version=${version:-unknown}"
+            echo "browser_contract=$contract"
+        } | tee -a "$GITHUB_OUTPUT"

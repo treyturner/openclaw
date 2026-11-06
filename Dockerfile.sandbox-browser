@@ -1,12 +1,15 @@
 # syntax=docker/dockerfile:1.27.1
-
-# OpenClaw v2026.11.1 browser image baseline.
-ARG BASE_REF=debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+ARG BASE_REF
 FROM ${BASE_REF} AS sandbox-browser
 
-LABEL org.openclaw.sandbox-browser.contract="2026-05-12-cdp-relay-auth"
+ARG UPSTREAM_TAG
+
+ARG BROWSER_CONTRACT
+LABEL org.openclaw.sandbox-browser.contract="${BROWSER_CONTRACT}"
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+RUN test -n "${UPSTREAM_TAG}" && test -n "${BROWSER_CONTRACT}"
 
 RUN --mount=type=cache,id=openclaw-sandbox-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=openclaw-sandbox-bookworm-apt-lists,target=/var/lib/apt/lists,sharing=locked \
@@ -27,8 +30,12 @@ RUN --mount=type=cache,id=openclaw-sandbox-bookworm-apt-cache,target=/var/cache/
         x11vnc \
         xvfb
 
-COPY --chmod=755 scripts/sandbox-browser-entrypoint.sh \
-    /usr/local/bin/openclaw-sandbox-browser
+RUN curl --fail --silent --show-error --location \
+      --retry 3 \
+      "https://raw.githubusercontent.com/openclaw/openclaw/v${UPSTREAM_TAG}/scripts/sandbox-browser-entrypoint.sh" \
+      -o /usr/local/bin/openclaw-sandbox-browser \
+    && chmod 0755 /usr/local/bin/openclaw-sandbox-browser \
+    && bash -n /usr/local/bin/openclaw-sandbox-browser
 
 RUN useradd --create-home --shell /bin/bash sandbox
 

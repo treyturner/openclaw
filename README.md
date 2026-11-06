@@ -1,7 +1,7 @@
 # treyturner/openclaw
 
-Custom OpenClaw gateway and sandbox images. The gateway extends
-`ghcr.io/openclaw/openclaw`; the sandbox extends
+Custom OpenClaw gateway and sandbox images, plus an optional sandbox browser
+image. The gateway extends `ghcr.io/openclaw/openclaw`; the sandbox extends
 `ghcr.io/jdx/mise:2026.10.17-debian` (Debian 13/Trixie), with Node 26 and uv
 installed by mise during the build. Together they provide:
 
@@ -358,13 +358,13 @@ for OAuth setup and persistence. Browser auto-launch is disabled in both images.
 
 ## Build strategy
 
-The publishing workflow rebuilds and tests a gateway and sandbox image pair daily,
-on pushes to `main`, and on manual dispatch. README/Funding-only pushes are
+The publishing workflow rebuilds and tests the gateway, sandbox, and sandbox
+browser images daily, on pushes to `main`, and on manual dispatch. README/Funding-only pushes are
 ignored. An unchanged base digest does not imply unchanged Debian packages or npm
 dependencies.
 
-Pull requests targeting `main` build and smoke-test both images in separate matrix
-jobs, using the same base resolution, dependency refresh policy, and smoke tests.
+Pull requests targeting `main` build and smoke-test all three images in separate
+matrix jobs, using the same base resolution, dependency refresh policy, and smoke tests.
 An additional Compose integration job tests the deployment against the published
 image pair. Publishing runs test the deployment with their actual candidates.
 These checks run for every PR update, including documentation changes, with read
@@ -374,23 +374,23 @@ publishing workflow.
 
 Publishing workflow:
 
-1. Require registry credentials and log in to GHCR and Forgejo before building; resolve each image's upstream base digest independently
-2. Build `Dockerfile.gateway` and `Dockerfile.sandbox` with their resolved bases and separate registry caches, loading both candidates locally
-3. Bypass the layer cache for the `gateway` and `sandbox` stages so APT, npm, and optional Python installation steps run again; reuse the sandbox's locked mise tool stage
-4. Test runtime tools and MCP configuration, then deploy both candidates inside DinD and run a sandboxed agent tool through a local model fixture
-5. Publish both candidates to GHCR after both builds and tests pass, then publish both to Forgejo
+1. Require registry credentials and log in to GHCR and Forgejo before building; resolve the three bases through `.github/actions/resolve/base`
+2. Build `Dockerfile.gateway`, `Dockerfile.sandbox`, and `Dockerfile.sandbox-browser` with their resolved bases and separate registry caches, loading all three candidates locally
+3. Bypass the layer cache for the `gateway`, `sandbox`, and `sandbox-browser` stages so dependencies refresh; reuse the sandbox's locked mise tool stage
+4. Test runtime tools, MCP configuration, and browser services, then deploy the gateway and sandbox candidates inside DinD and run a sandboxed agent tool through a local model fixture
+5. Publish all three candidates to GHCR after the builds and tests pass, then publish all three to Forgejo
 
 Schedule: daily at 08:00 UTC + manual dispatch.
 
 Both registries are required. GHCR uses the workflow's `GITHUB_TOKEN` with package
 write permission. Set the repository secret `FORGEJO_REGISTRY_TOKEN` to a token
-that can write both Forgejo packages as the repository owner. A missing token or
+that can write all three Forgejo packages as the repository owner. A missing token or
 failed login stops the workflow before any builds or release tag pushes.
 
-A Forgejo push failure fails the workflow after both GHCR images have been
+A Forgejo push failure fails the workflow after all three GHCR images have been
 published. Pushes across tags and repositories are separate operations, so a
 later failure can leave only some tags updated. Rerun the workflow to retry the
-pair; the rebuild may include newer upstream images or dependencies. New runs
+images; the rebuild may include newer upstream images or dependencies. New runs
 wait for the active run instead of automatically cancelling publication midway.
 
 The shared `.dockerignore` allows only the two mcporter configuration files,
@@ -407,9 +407,23 @@ reuse npm downloads and browser binaries; bypassing layer reuse ensures
 the installation steps actually check their repositories. This follows Docker's
 [cache invalidation guidance](https://docs.docker.com/build/cache/invalidation/).
 
-OpenClaw follows upstream `latest`, resolved to a digest for each build. The mise
-base, MCP package versions, Docker CLI image, and uv image are pinned. Node and uv
-downloads are locked with checksums in `sandbox/mise.lock`. Updating those tools
+`.github/openclaw-version` selects the OpenClaw release for both PR and publishing
+builds. The shared resolver pins the gateway's release tag to a digest. For the
+browser it reads that release's upstream Dockerfile, preserving its exact Debian
+base digest and browser contract label. The browser entrypoint is downloaded from
+the same OpenClaw release during the image build; no local copy is required in
+the Docker context. Update the one version file when upgrading OpenClaw.
+
+The browser image runs upstream's Chromium, authenticated CDP relay, Xvfb, VNC,
+and noVNC stack. Its smoke test starts the real command as UID 1000 with a
+read-only root and no external network, checks that CDP rejects unauthenticated
+requests, and verifies authenticated CDP plus password-protected VNC and noVNC.
+This image does not include Node or the gateway/sandbox tool stack. The default
+deployment still uses Playwright in the sandbox and leaves this browser sidecar
+disabled; publishing the image does not enable it in an existing configuration.
+
+The mise base, MCP package versions, Docker CLI image, and uv image are pinned.
+Node and uv downloads are locked with checksums in `sandbox/mise.lock`. Updating those tools
 requires a reviewed version or lockfile change. Keep uv's version in
 `sandbox/mise.toml` and the gateway's uv image reference in sync, including the
 image digest.
@@ -423,16 +437,24 @@ For a local build with the same refresh policy:
 
 ```sh
 docker buildx build --pull --no-cache-filter gateway \
+  --build-arg BASE_TAG="$(cat .github/openclaw-version)" \
   -f Dockerfile.gateway --load -t openclaw-gateway:local .
 docker buildx build --pull --no-cache-filter sandbox \
   -f Dockerfile.sandbox --load -t openclaw-sandbox:local .
 ```
+
+For the browser, pass the shared resolver's `base_ref`, `upstream_version`, and
+`browser_contract` outputs as the `BASE_REF`, `UPSTREAM_TAG`, and
+`BROWSER_CONTRACT` build arguments. Both workflows supply these automatically;
+the resolver logic lives directly in the composite action's `run` block.
 
 Run the same smoke tests locally before publishing:
 
 ```sh
 bash tests/image-smoke.sh gateway <gateway-image>
 bash tests/image-smoke.sh sandbox <sandbox-image>
+bash tests/image-smoke.sh sandbox-browser <browser-image>
+python3 tests/resolve-base.py
 ```
 
 Tests run as each image's default user with a read-only root filesystem, empty
@@ -442,7 +464,7 @@ explicit overrides, and bearer authentication. The gateway must start and
 respond to `/healthz` and negotiate Docker Engine APIs 1.44 and 1.41 against local
 fixtures; the sandbox must navigate and save a screenshot through
 its configured Playwright MCP. Both must run Node, npm, Python, and uv from a
-login shell. A failure in either candidate prevents publication of both images.
+login shell. A failure in any candidate prevents publication of all three images.
 Both also launch Whisper directly and through normal and login shells,
 decode audio with `ffmpeg`, and run a miniature random Whisper model on CPU
 without downloading weights.
@@ -466,8 +488,10 @@ Compose, Python 3, and support for privileged DinD containers.
 
 ## Published tags
 
-Both `ghcr.io/treyturner/openclaw` (gateway) and
-`ghcr.io/treyturner/openclaw-sandbox` (sandbox), plus their Forgejo mirrors, receive:
+`ghcr.io/treyturner/openclaw` (gateway),
+`ghcr.io/treyturner/openclaw-sandbox` (sandbox), and
+`ghcr.io/treyturner/openclaw-sandbox-browser` (browser), plus their Forgejo mirrors,
+receive:
 
 - `latest`
 - `daily`
