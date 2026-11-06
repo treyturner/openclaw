@@ -25,6 +25,8 @@ jobs:
       SANDBOX_UPSTREAM_REF: ghcr.io/jdx/mise:2026.10.17-debian
       GATEWAY_DOWNSTREAM_REF: ghcr.io/treyturner/openclaw
       SANDBOX_DOWNSTREAM_REF: ghcr.io/treyturner/openclaw-sandbox
+      BROWSER_UPSTREAM_REF: debian:bookworm-slim
+      BROWSER_DOWNSTREAM_REF: ghcr.io/treyturner/openclaw-sandbox-browser
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -35,7 +37,7 @@ jobs:
           FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
         run: |
           if [[ -z "$FORGEJO_REGISTRY_TOKEN" ]]; then
-            echo "::error::FORGEJO_REGISTRY_TOKEN is required to publish both images to Forgejo. Set the repository secret before building."
+            echo "::error::FORGEJO_REGISTRY_TOKEN is required to publish all three images to Forgejo. Set the repository secret before building."
             exit 1
           fi
 
@@ -68,6 +70,12 @@ jobs:
         with:
           upstream-image-ref: ${{ env.SANDBOX_UPSTREAM_REF }}
 
+      - name: Resolve browser base
+        id: browser_base
+        uses: ./.github/actions/resolve/base
+        with:
+          upstream-image-ref: ${{ env.BROWSER_UPSTREAM_REF }}
+
       - name: Compute gateway image refs
         id: gateway_refs
         uses: ./.github/actions/compute/image-refs
@@ -87,6 +95,16 @@ jobs:
           downstream-repos: |
             ${{ env.SANDBOX_DOWNSTREAM_REF }}
             forgejo.treyturner.info/treyturner/openclaw-sandbox
+
+      - name: Compute browser image refs
+        id: browser_refs
+        uses: ./.github/actions/compute/image-refs
+        with:
+          upstream-short-digest: ${{ steps.browser_base.outputs.upstream_short_digest }}
+          upstream-version: 2026.11.1
+          downstream-repos: |
+            ${{ env.BROWSER_DOWNSTREAM_REF }}
+            forgejo.treyturner.info/treyturner/openclaw-sandbox-browser
 
       - name: Build gateway candidate
         uses: docker/build-push-action@eb6512707bea5740b2608f2a43ece7bc543cb75b  # v7.0.0
@@ -118,6 +136,21 @@ jobs:
           load: true
           push: false
 
+      - name: Build browser candidate
+        uses: docker/build-push-action@eb6512707bea5740b2608f2a43ece7bc543cb75b  # v7.0.0
+        with:
+          context: .
+          file: Dockerfile.sandbox-browser
+          build-args: |
+            BASE_REF=${{ env.BROWSER_UPSTREAM_REF }}@${{ steps.browser_base.outputs.upstream_digest }}
+          pull: true
+          no-cache-filters: sandbox-browser
+          cache-from: type=registry,ref=${{ env.BROWSER_DOWNSTREAM_REF }}:buildcache
+          cache-to: type=registry,ref=${{ env.BROWSER_DOWNSTREAM_REF }}:buildcache,mode=max
+          tags: ${{ env.BROWSER_DOWNSTREAM_REF }}:${{ steps.browser_refs.outputs.candidate_tag }}
+          load: true
+          push: false
+
       - name: Smoke test gateway candidate
         timeout-minutes: 10
         uses: ./.github/actions/test
@@ -131,6 +164,13 @@ jobs:
         with:
           candidate-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
           role: sandbox
+
+      - name: Smoke test browser candidate
+        timeout-minutes: 5
+        uses: ./.github/actions/test
+        with:
+          candidate-ref: ${{ env.BROWSER_DOWNSTREAM_REF }}:${{ steps.browser_refs.outputs.candidate_tag }}
+          role: sandbox-browser
 
       - name: Make room for the nested Docker image store
         run: sudo rm -rf /usr/local/lib/android
@@ -156,6 +196,13 @@ jobs:
           registry: ghcr.io
           refs: ${{ steps.sandbox_refs.outputs.refs }}
 
+      - name: Publish browser to GHCR
+        uses: ./.github/actions/publish
+        with:
+          candidate-ref: ${{ env.BROWSER_DOWNSTREAM_REF }}:${{ steps.browser_refs.outputs.candidate_tag }}
+          registry: ghcr.io
+          refs: ${{ steps.browser_refs.outputs.refs }}
+
       - name: Publish gateway to Forgejo
         uses: ./.github/actions/publish
         with:
@@ -169,3 +216,10 @@ jobs:
           candidate-ref: ${{ env.SANDBOX_DOWNSTREAM_REF }}:${{ steps.sandbox_refs.outputs.candidate_tag }}
           registry: forgejo.treyturner.info
           refs: ${{ steps.sandbox_refs.outputs.refs }}
+
+      - name: Publish browser to Forgejo
+        uses: ./.github/actions/publish
+        with:
+          candidate-ref: ${{ env.BROWSER_DOWNSTREAM_REF }}:${{ steps.browser_refs.outputs.candidate_tag }}
+          registry: forgejo.treyturner.info
+          refs: ${{ steps.browser_refs.outputs.refs }}

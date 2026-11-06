@@ -25,6 +25,9 @@ jobs:
           - role: sandbox
             upstream-ref: ghcr.io/jdx/mise:2026.10.17-debian
             cache-ref: ghcr.io/treyturner/openclaw-sandbox:buildcache
+          - role: sandbox-browser
+            upstream-ref: debian:bookworm-slim
+            cache-ref: ghcr.io/treyturner/openclaw-sandbox-browser:buildcache
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
