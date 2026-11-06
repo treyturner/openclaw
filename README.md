@@ -23,10 +23,12 @@ installed by mise during the build. Together they provide:
   - git
   - imagemagick
   - jq
+  - less
   - openssh-client
   - OpenAI Whisper (`whisper`)
   - pkg-config in the sandbox
   - python3-venv
+  - ripgrep (`rg`)
   - rsync
   - shellcheck in the sandbox
   - tmux
