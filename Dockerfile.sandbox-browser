@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1.27.1
+ARG BASE_REF
+FROM ${BASE_REF} AS sandbox-browser
+
+ARG UPSTREAM_TAG
+
+ARG BROWSER_CONTRACT
+LABEL org.openclaw.sandbox-browser.contract="${BROWSER_CONTRACT}"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN test -n "${UPSTREAM_TAG}" && test -n "${BROWSER_CONTRACT}"
+
+RUN --mount=type=cache,id=openclaw-sandbox-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-sandbox-bookworm-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        chromium \
+        curl \
+        fonts-liberation \
+        fonts-noto-cjk \
+        fonts-noto-color-emoji \
+        git \
+        jq \
+        novnc \
+        python3 \
+        websockify \
+        x11vnc \
+        xvfb
+
+RUN curl --fail --silent --show-error --location \
+      --retry 3 \
+      "https://raw.githubusercontent.com/openclaw/openclaw/v${UPSTREAM_TAG}/scripts/sandbox-browser-entrypoint.sh" \
+      -o /usr/local/bin/openclaw-sandbox-browser \
+    && chmod 0755 /usr/local/bin/openclaw-sandbox-browser \
+    && bash -n /usr/local/bin/openclaw-sandbox-browser
+
+RUN useradd --create-home --shell /bin/bash sandbox
+
+USER sandbox
+WORKDIR /home/sandbox
+
+EXPOSE 9222 5900 6080
+
+CMD ["openclaw-sandbox-browser"]

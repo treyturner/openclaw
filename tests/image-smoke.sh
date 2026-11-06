@@ -2,9 +2,9 @@
 set -euo pipefail
 
 if [[ $# -lt 2 || $# -gt 3 \
-    || ( "$1" != gateway && "$1" != sandbox ) \
-    || ( $# == 3 && "$3" != --npm-extras ) ]]; then
-    echo "Usage: bash tests/image-smoke.sh <gateway|sandbox> <image> [--npm-extras]" >&2
+    || ( "$1" != gateway && "$1" != sandbox && "$1" != sandbox-browser ) \
+    || ( $# == 3 && ( "$3" != --npm-extras || "$1" == sandbox-browser ) ) ]]; then
+    echo "Usage: bash tests/image-smoke.sh <gateway|sandbox|sandbox-browser> <image> [--npm-extras]" >&2
     exit 2
 fi
 
@@ -12,6 +12,7 @@ test_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 role="$1"
 image="$2"
 case "$role" in
+    sandbox-browser) exec python3 "$test_dir/browser-smoke.py" "$image" ;;
     gateway) runtime_home=/home/node ;;
     sandbox) runtime_home=/home/sandbox ;;
 esac

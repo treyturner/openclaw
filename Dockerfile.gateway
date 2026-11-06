@@ -36,10 +36,12 @@ RUN --mount=type=cache,target=/var/lib/apt,id=gateway-apt-lib,sharing=locked \
         gpg \
         iproute2 \
         iputils-ping \
+        less \
         mtr-tiny \
         net-tools \
         netcat-openbsd \
         python3 \
+        ripgrep \
         tcpdump \
         telnet \
         tmux \

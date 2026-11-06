@@ -1,12 +1,12 @@
 name: Test
-description: Test a gateway or sandbox candidate before publication
+description: Test a gateway, sandbox, or sandbox-browser candidate before publication
 
 inputs:
   candidate-ref:
     description: "Fully-qualified image ref to test (ie. `registry.example.com/owner/repo:tag`)"
     required: true
   role:
-    description: "Image role: gateway or sandbox"
+    description: "Image role: gateway, sandbox, or sandbox-browser"
     required: true
 
 runs:
