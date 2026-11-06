@@ -90,6 +90,10 @@ from whisper.model import ModelDimensions, Whisper
 
 assert torch.version.cuda is None, 'Expected CPU-only PyTorch'
 torch.set_num_threads(2)
+torch.manual_seed(0)
+# Make reads from uninitialized tensors fail consistently across allocators.
+torch.use_deterministic_algorithms(True)
+torch.utils.deterministic.fill_uninitialized_memory = True
 with wave.open('/tmp/whisper-smoke.wav', 'wb') as audio:
     audio.setnchannels(1)
     audio.setsampwidth(2)
@@ -103,10 +107,13 @@ assert mel.shape == (80, 3000)
 model = Whisper(ModelDimensions(n_mels=80, n_audio_ctx=1500, n_audio_state=16,
     n_audio_head=2, n_audio_layer=1, n_vocab=51864, n_text_ctx=448,
     n_text_state=16, n_text_head=2, n_text_layer=1))
+# Whisper leaves this torch.empty parameter for checkpoint loading. This
+# offline fixture has no checkpoint, so it must initialize the embedding.
+torch.nn.init.normal_(model.decoder.positional_embedding, std=0.02)
 with torch.no_grad():
     logits = model(mel.unsqueeze(0), torch.tensor([[50257]]))
 assert logits.shape == (1, 1, 51864)
-assert torch.isfinite(logits).all()
+assert torch.isfinite(logits).all(), 'Whisper CPU inference produced non-finite logits'
 print('Whisper', importlib.metadata.version('openai-whisper'), 'PyTorch', torch.__version__)
 `]);
 assert.equal(whisper.code, 0, whisper.stdout + whisper.stderr);
