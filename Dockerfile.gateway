@@ -6,6 +6,16 @@ ARG BASE_REGISTRY=ghcr.io \
 
 ARG BASE_REF=${BASE_REGISTRY}/${BASE_OWNER}/${BASE_REPO}:${BASE_TAG}
 
+# Install only gog from the shared lockfile; mise stays out of the gateway.
+FROM ghcr.io/jdx/mise:2026.10.17-debian@sha256:dfa047d38d4bc43afdfb9f4f402f2a21817d086301ee4f3587f71ed7c9fb8261 AS gog-tools
+
+COPY --chmod=0644 sandbox/mise.toml /mise/config.toml
+COPY --chmod=0644 sandbox/mise.lock /mise/mise.lock
+RUN --mount=type=cache,target=/tmp/.cache/mise,id=mise-cache,sharing=locked \
+    MISE_CACHE_DIR=/tmp/.cache/mise mise install --locked github:openclaw/gogcli \
+    && install -Dm0755 "$(mise which gog)" /out/gog \
+    && /out/gog --version
+
 FROM ${BASE_REF} AS gateway
 
 ARG EXTRA_APT_PKGS="" \
@@ -69,6 +79,8 @@ RUN --mount=type=cache,target=/var/lib/apt,id=gateway-apt-lib,sharing=locked \
 
 # The gateway controls the sandbox daemon using only the official Docker CLI.
 COPY --from=docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb /usr/local/bin/docker /usr/local/bin/docker
+
+COPY --from=gog-tools /out/gog /usr/local/bin/gog
 
 # Keep core MCP tools separate from optional npm packages.
 RUN --mount=type=cache,target=/root/.npm,id=npm-cache \
