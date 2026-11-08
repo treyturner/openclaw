@@ -47,6 +47,8 @@ services:
       DOCKER_TLS_CERTDIR: ""
     # Explicit dockerd keeps the Docker API on the Unix socket only.
     command: ["dockerd", "--host=unix:///run/dind/docker.sock", "--group=${DOCKER_GID:-2375}"]
+    # The inner gateway shares DinD's network and listens directly on port 18789.
+    # This optional mapping forwards it from DinD to the physical Docker host.
     ports:
       - "${OPENCLAW_PUBLISH_HOST:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
     volumes:
