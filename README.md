@@ -192,8 +192,9 @@ docker compose run --rm openclaw-deploy exec openclaw-gateway \
   curl -i http://127.0.0.1:18789/healthz
 ```
 
-The inner CLI shares the gateway's network and PID namespaces so loopback
-reaches the gateway and shared-state ownership checks can identify its process.
+The inner gateway uses `network_mode: host`, sharing **DinD's** network namespace.
+The inner CLI joins the gateway's network and PID namespaces so loopback reaches
+the gateway and shared-state ownership checks can identify its process.
 The controller preserves interactive input for commands such as onboarding.
 
 `sandbox recreate` requires exclusive offline state ownership in OpenClaw
@@ -209,8 +210,8 @@ docker compose run --rm openclaw-cli sandbox list
 ```
 
 Run the start command after maintenance even if recreation fails. The one-off
-container runs the CLI instead of starting another gateway and does not publish
-the gateway's ports. The regular `openclaw-cli` service shares the running
+container runs the CLI command without starting a gateway listener; it inherits
+DinD's host network. The regular `openclaw-cli` service shares the running
 gateway's namespaces and depends on its health, so it cannot be used for this
 offline operation. `--force` skips confirmation; it does not bypass ownership.
 Recreation removes sandbox containers; OpenClaw creates replacements when the
@@ -221,12 +222,26 @@ and a stopped native service while its connectivity check succeeds. Docker
 Compose owns the gateway process; use the deployment controller for lifecycle
 commands. See the [sandbox CLI ownership requirements](https://docs.openclaw.ai/cli/sandbox).
 
-The gateway uses `--bind lan`, which listens on `0.0.0.0` inside its container.
-The inner stack publishes gateway port 18789 on **DinD's interfaces**. The outer
-stack then publishes that port on
+The gateway uses `--bind lan`, listening on `0.0.0.0:18789` directly on
+**DinD's interfaces** through the inner service's `network_mode: host`.
+Here, "host" is the DinD container, not the physical Docker host. The gateway
+has no separate container IP or inner `ports` mapping. The outer stack can
+publish DinD's port on
 `${OPENCLAW_PUBLISH_HOST}:${OPENCLAW_GATEWAY_PORT}`, defaulting to
-`127.0.0.1:18789` on the physical host. These are two separate port mappings.
-The Docker API continues to listen only on its Unix socket.
+`127.0.0.1:18789` on the physical host. `OPENCLAW_GATEWAY_PORT` changes only this
+outer host port; the gateway still listens on 18789 inside DinD. Do not add
+`ports` or `networks` to the host-networked inner gateway. See Docker's
+[host networking](https://docs.docker.com/engine/network/drivers/host/) documentation.
+
+Sharing DinD's network also lets the gateway reach sandbox browser/CDP endpoints
+published on DinD's `127.0.0.1`. A gateway on an inner bridge would use its own
+loopback and miss those endpoints. Sandboxes and optional browser sidecars keep
+their configured bridge networks; do not give them host networking. Within a
+sandbox, `127.0.0.1` still means that sandbox. A sandbox connecting to a gateway
+service must use the gateway address on its Docker network (for the default
+bridge, the gateway address reported by `docker network inspect bridge` inside
+DinD) and a listener bound to that interface. Host networking gives the gateway
+access to DinD's listeners; the Docker API remains on its Unix socket.
 
 For an HTTPS reverse proxy, terminate TLS at the proxy and forward plain HTTP to
 the gateway port unless you separately configure gateway TLS. Set
@@ -237,12 +252,14 @@ the allowed origin, rather than a listening interface. Configure OpenClaw's
 
 For your own macvlan/VLAN Compose stack, attach **`openclaw-dind`** to the VLAN.
 For example, a DinD IP of `192.168.20.50` gives HAProxy the backend
-`http://192.168.20.50:18789`. The inner gateway is reached through DinD's port
-mapping; it needs no separate VLAN address. The two outer controller services
+`http://192.168.20.50:18789`. The gateway listens directly on that DinD address;
+it needs no separate VLAN address. The two outer controller services
 use Unix sockets and can keep `network_mode: none`. No host port mapping is
 needed for direct macvlan access, so remove `openclaw-dind.ports` from the outer
-file in that deployment. `OPENCLAW_PUBLISH_HOST` then has no effect. Keep the
-inner gateway's port mapping: it is what forwards DinD port 18789 to OpenClaw.
+file in that deployment. `OPENCLAW_PUBLISH_HOST` and `OPENCLAW_GATEWAY_PORT` then
+have no effect. Keep `network_mode: host` on the inner gateway, with no inner
+port mapping. CDP ports bound only to DinD's loopback remain internal; host mode
+does not publish them to the LAN.
 
 To check proxy reachability, request `http://<dind-ip>:18789/healthz` from the
 proxy host; expect HTTP 200. Macvlan normally isolates containers from the outer
@@ -273,8 +290,9 @@ the gateway. These temporary files use disk space and can survive a restart;
 remove abandoned files only while OpenClaw is stopped.
 
 For custom DNS, configure `services.openclaw-dind.dns` in the outer stack for
-registry access, and `services.openclaw-gateway.dns` in the inner stack for the
-gateway. Sandbox DNS is configured through
+registry access and the resolver inherited by the host-networked gateway.
+An explicit `services.openclaw-gateway.dns` in the inner stack overrides that
+resolver for the gateway. Sandbox DNS is configured through
 `agents.defaults.sandbox.docker.dns` in OpenClaw's deployed config. Set the
 sandbox network to `none` there if you want offline tools.
 
@@ -565,6 +583,8 @@ python3 tests/compose-smoke.py <gateway-image> <sandbox-image>
 
 This test creates its own Compose project and volumes, transfers the supplied
 images into DinD, and validates gateway HTTP and the administration CLI. It
+checks that the gateway shares DinD's network, reaches a loopback-published
+CDP fixture, and accepts connections from a bridge-networked sandbox. It
 reproduces the container identity failure with an outer gateway, then uses a
 local model fixture to make the nested gateway create a real sandbox and execute
 a tool against the workspace. It also runs OpenClaw's real setup inference check,

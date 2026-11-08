@@ -46,10 +46,9 @@ services:
   openclaw-gateway:
     <<: *runtime
     restart: unless-stopped
-    # This publishes on DinD's network interfaces. The outer stack optionally
-    # forwards that port to the physical Docker host.
-    ports:
-      - "0.0.0.0:18789:18789"
+    # "host" is DinD's network namespace, including its loopback CDP bindings.
+    # The gateway listens directly on DinD; do not add an inner ports mapping.
+    network_mode: host
     command: ["gateway", "--bind", "lan", "--port", "18789"]
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:18789/healthz"]

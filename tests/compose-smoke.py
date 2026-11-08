@@ -83,6 +83,9 @@ with tempfile.TemporaryDirectory(prefix=project + '-') as scratch:
         def inner(*args, **kwargs):
             return dc('run', '--rm', '-T', 'openclaw-deploy', *args, **kwargs)
 
+        def dind(*args, **kwargs):
+            return dc('exec', '-T', 'openclaw-dind', 'docker', *args, **kwargs)
+
         assert all(name.startswith('openclaw-') for name in config['services'])
         assert 'openclaw-gateway' not in config['services']
         assert config['services']['openclaw-dind']['environment'].get('OPENCLAW_GATEWAY_TOKEN') is None
@@ -109,13 +112,55 @@ with tempfile.TemporaryDirectory(prefix=project + '-') as scratch:
         assert outer.returncode != 0, 'Gateway was accidentally created on the outer daemon'
         dc('run', '--rm', '-T', 'openclaw-cli', 'config', 'validate')
         print('PASS: gateway is managed by DinD; the nested administration CLI validates its configuration', flush=True)
+        inner_config = json.loads(inner('config', '--format', 'json'))
+        gateway_config = inner_config['services']['openclaw-gateway']
+        assert gateway_config['network_mode'] == 'host', 'Gateway must share DinD networking'
+        assert not gateway_config.get('ports'), 'Host-networked gateway must not publish inner ports'
+        assert not gateway_config.get('networks'), 'Host-networked gateway must not join an inner bridge'
+        dind_namespace = dc('exec', '-T', 'openclaw-dind', 'readlink', '/proc/self/ns/net')
+        gateway_namespace = inner('exec', '-T', 'openclaw-gateway', 'readlink', '/proc/self/ns/net')
+        assert gateway_namespace == dind_namespace, 'Gateway is not in DinD\'s network namespace'
         network = config['networks']['default']['name']
         call(['docker', 'run', '--rm', '--network', network, '--entrypoint', 'wget', cli_image,
               '-q', '-O', '-', 'http://openclaw-dind:18789/healthz'])
         print('PASS: gateway HTTP is reachable through DinD on port 18789', flush=True)
+
+        # Match the topology used by OpenClaw's browser: a bridge container with
+        # CDP published only on the inner daemon's loopback. An inner bridged
+        # gateway cannot reach this binding using its own 127.0.0.1.
+        cdp_fixture = """
+          require('node:http').createServer((request, response) => {
+            response.writeHead(request.url === '/json/version' ? 200 : 404,
+              {'Content-Type': 'application/json'});
+            response.end(JSON.stringify({Browser: 'CDP network fixture', marker: process.env.FIXTURE_MARKER}));
+          }).listen(9222, '0.0.0.0');
+        """
+        cdp_id = dind('run', '--detach', '--name', project + '-cdp',
+                      '--network', 'bridge', '--publish', '127.0.0.1::9222',
+                      '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+                      '--env', 'FIXTURE_MARKER=' + project,
+                      '--entrypoint', 'node', sys.argv[2], '--eval', cdp_fixture)
+        try:
+            cdp_inspect = json.loads(dind('inspect', cdp_id))[0]
+            assert cdp_inspect['HostConfig']['NetworkMode'] == 'bridge'
+            binding = cdp_inspect['NetworkSettings']['Ports']['9222/tcp'][0]
+            assert binding['HostIp'] == '127.0.0.1'
+            cdp_url = 'http://127.0.0.1:' + binding['HostPort'] + '/json/version'
+            result = json.loads(inner('exec', '-T', 'openclaw-gateway', 'curl',
+                                      '--fail', '--silent', '--show-error', '--retry', '5',
+                                      '--retry-connrefused', '--retry-delay', '1', cdp_url))
+            assert result['marker'] == project
+            bridge = json.loads(dind('network', 'inspect', 'bridge'))[0]
+            bridge_gateway = bridge['IPAM']['Config'][0]['Gateway']
+            dind('run', '--rm', '--network', 'bridge', '--entrypoint', 'curl', sys.argv[2],
+                 '--fail', '--silent', '--show-error', f'http://{bridge_gateway}:18789/healthz')
+            print('PASS: gateway reaches loopback-published CDP; bridge sandboxes reach the gateway through DinD', flush=True)
+        finally:
+            dind('rm', '--force', cdp_id)
+
         probe = (root / 'tests/compose-smoke.mjs').read_text()
         print('Reproducing the original topology error with an outer gateway...', flush=True)
-        runtime_env = json.loads(inner('config', '--format', 'json'))['services']['openclaw-gateway']['environment']
+        runtime_env = gateway_config['environment'].copy()
         # The deliberately wrong gateway must not collide with the live gateway's
         # state ownership lock before it reaches the Docker identity check.
         runtime_env['OPENCLAW_STATE_DIR'] = base_env['OPENCLAW_USER_BASE'] + '/wrong-gateway-state'
