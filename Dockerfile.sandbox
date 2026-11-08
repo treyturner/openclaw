@@ -30,14 +30,15 @@ COPY --chmod=0644 sandbox/mise.toml /mise/config.toml
 COPY --chmod=0644 sandbox/mise.lock /mise/mise.lock
 RUN --mount=type=cache,target=/tmp/.cache/mise,id=mise-cache,sharing=locked \
     mise install --locked \
-    && for tool in node npx uv uvx gh; do \
+    && for tool in node npx uv uvx gh gog; do \
         ln -s "$(mise which "$tool")" "/usr/local/bin/$tool"; \
     done \
     && ln -s "$(mise where node)/lib/node_modules/npm/bin/npm-cli.js" /usr/local/bin/npm \
     && node --version \
     && npm --version \
     && uv --version \
-    && gh --version
+    && gh --version \
+    && gog --version
 
 USER sandbox
 WORKDIR /workspace

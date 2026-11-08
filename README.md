@@ -3,49 +3,33 @@
 Custom OpenClaw gateway and sandbox images, plus an optional sandbox browser
 image. The gateway extends `ghcr.io/openclaw/openclaw`; the sandbox extends
 `ghcr.io/jdx/mise:2026.10.17-debian` (Debian 13/Trixie), with Node 26 and uv
-installed by mise during the build. Together they provide:
+installed by mise during the build.
 
-- MCPs installed and configured for use:
-    - Playwright in the sandbox ([`@playwright/mcp`](https://github.com/microsoft/playwright-mcp))
-    - TickTick via its [official remote MCP service](https://help.ticktick.com/articles/7438129581631995904)
-- Chromium in the sandbox, installed by the matching Playwright version
-- Commonly needed workflow utilities:
-  - 1Password CLI (`op`) in both images
-  - bash with `openclaw` completion
-  - build-essential (C/C++ compilers and make) in the sandbox
-  - Claude Code CLI (`claude`) in both images
-  - Coder CLI from the self-hosted instance in the sandbox
-  - curl
-  - docker cli for sandboxing
-  - fd-find (`fd` and `fdfind`) in the sandbox
-  - ffmpeg
-  - gh
-  - git
-  - imagemagick
-  - jq
-  - less
-  - openssh-client
-  - OpenAI Whisper (`whisper`)
-  - pkg-config in the sandbox
-  - python3-venv
-  - ripgrep (`rg`)
-  - rsync
-  - shellcheck in the sandbox
-  - tmux
-  - vim
-  - wget
-  - yq
-  - zip and unzip in the sandbox
-- Network debugging:
-  - dnsutils
-  - iputils-ping
-  - iproute2
-  - mtr-tiny
-  - net-tools
-  - netcat-openbsd
-  - tcpdump
-  - telnet
-  - traceroute
+## Shipped tools
+
+In this table, **both** means the gateway and the regular agent sandbox.
+The main command-line tools are grouped by purpose. Installation sources:
+[gateway Dockerfile](Dockerfile.gateway),
+[sandbox Dockerfile](Dockerfile.sandbox), and [sandbox tool manifest](sandbox/mise.toml).
+
+| Category | Both images | Gateway only | Sandbox only |
+| --- | --- | --- | --- |
+| Runtimes and services | Node.js, npm/npx, Python 3, uv/uvx | OpenClaw CLI and gateway, Docker CLI, pnpm, Corepack | mise, `python3-venv` |
+| Accounts and integrations | 1Password CLI (`op`), Claude Code (`claude`), [gog](https://gogcli.sh/) (Google Workspace CLI), GnuPG, mcporter with TickTick remote MCP defaults | — | Coder CLI from the self-hosted instance, [Playwright MCP](https://github.com/microsoft/playwright-mcp) |
+| Development and shell | Bash, Git, GitHub CLI (`gh`), OpenSSH client (`ssh`, `scp`, `sftp`), less, tmux | vim, OpenClaw Bash completion | build-essential (C/C++ compilers and make), pkg-config, shellcheck |
+| Files and data | coreutils, ripgrep (`rg`), jq, yq, tar/gzip | — | fd-find (`fd` and `fdfind`), rsync, zip/unzip |
+| Media and browser | ffmpeg, OpenAI Whisper (`whisper`) with CPU-only PyTorch | — | ImageMagick, Chromium matched to Playwright MCP |
+| Networking and diagnostics | curl, wget; DNS tools (`dig`, `host`, `nslookup`); `ip`/`ss`, ping, mtr, netstat, netcat (`nc`), tcpdump, telnet, traceroute | — | — |
+
+The gateway inherits Git, OpenSSH, pnpm, and Corepack from the pinned OpenClaw
+base. Its Node.js version also comes from that base; the sandbox's Node.js and
+other mise tools use `sandbox/mise.lock`. TickTick is a configured remote MCP
+endpoint, while Playwright MCP and its Chromium binary are installed locally in
+the sandbox. Authentication is supplied at runtime.
+
+The optional **`sandbox-browser`** image is a separate browser sidecar with
+Chromium, Xvfb, x11vnc, noVNC/websockify, and OpenClaw's authenticated CDP relay.
+Its contents and release matching are described in [Build strategy](#build-strategy).
 
 The sandbox runs as `sandbox` (UID/GID 1000), with `HOME=/home/sandbox` and
 `/workspace` as its working directory. Additional package installation runs from
@@ -120,12 +104,21 @@ refresh it along with the sandbox dependency stage, so rebuild after upgrading
 the Coder server. Builds require access to that instance. Coder login and
 credentials are configured at runtime.
 
-To update sandbox tools, edit `sandbox/mise.toml` as needed, then regenerate the
+Both images install `gog` from the official `openclaw/gogcli` GitHub releases
+through mise, sharing the version and Linux x64/ARM64 archive checksums in
+`sandbox/mise.lock`. The gateway copies only the binary from a build stage;
+its runtime does not include mise. `/usr/local/bin/gog` works without shell
+activation and survives mounted homes and workspaces in both images. Configure
+[Google authentication](#google-authentication-gog) at runtime.
+
+To update mise-managed tools, edit `sandbox/mise.toml` as needed, then regenerate the
 lockfile with mise 2026.10.17 or later and review the resulting versions:
 
 ```sh
 mise -C sandbox lock --bump --platform linux-x64,linux-arm64
 ```
+
+A gog lockfile update applies to both image builds.
 
 Playwright MCP uses `/usr/local/bin/chromium` and runs headless with an isolated
 profile. Its default output directory is `/workspace/.playwright-mcp`; explicit
@@ -303,6 +296,100 @@ merging the renamed `openclaw-dind` service into a larger stack. Update a macvla
 proxy backend from the old gateway IP to the DinD IP after deployment succeeds.
 `DOCKER_SOCKET` is unused; `DOCKER_GID` controls the shared DinD socket group.
 
+## Google authentication (`gog`)
+
+`gog` authenticates independently of OpenClaw's model providers. For personal
+Google accounts and normal Workspace user APIs, create a Google Cloud project,
+enable the APIs you need, and download a **Desktop app** OAuth client JSON. Import
+that client and authorize your account once; `gog` then uses its stored refresh
+token for unattended API calls. See the [gog quickstart](https://gogcli.sh/quickstart.html).
+
+Use the encrypted file keyring in these headless containers. Set these variables
+in each runtime that invokes `gog`; installing the binary does not share a login:
+
+| Variable | Gateway / administration CLI | Agent sandbox |
+| --- | --- | --- |
+| `GOG_HOME` | `<OPENCLAW_USER_BASE>/gog`, inside the existing data bind | `/gog`, backed by an explicit persistent bind |
+| `GOG_KEYRING_BACKEND` | `file` | `file` |
+| `GOG_KEYRING_PASSWORD` | Runtime secret used to encrypt/decrypt the file keyring | The same secret when sharing that keyring |
+| `GOG_ACCOUNT` (optional) | Account email to select by default | Account email to select by default |
+
+These are opt-in settings, not image defaults. Create the persistent directory
+owned by UID/GID 1000 with mode 0700. Keep it outside the agent workspace so
+workspace files and repositories do not contain credentials. `GOG_HOME` holds
+config, OAuth client data, encrypted tokens, state, and cache; keep the directory
+writable for locks and updates. See [gog paths and state](https://gogcli.sh/paths.html).
+
+For this nested Compose deployment, add the gateway variables to
+`x-runtime.environment` in `compose.inner.yaml`. Forward
+`GOG_KEYRING_PASSWORD: ${GOG_KEYRING_PASSWORD:?Set GOG_KEYRING_PASSWORD}` through
+`x-openclaw-launcher.environment` in the outer `compose.yaml` as well, and supply
+the secret from your local environment or untracked `.env`. Recreate the gateway
+after changing its environment. Merely adding a variable to `.env` does not
+forward it through either container layer.
+
+Copy the client JSON under your data base, readable only by UID 1000. For the
+default base path, run the following through the gateway. Replace the paths,
+email, and services to suit your deployment:
+
+```sh
+docker compose run --rm openclaw-deploy exec openclaw-gateway \
+  gog auth credentials set /mnt/cache/appdata/openclaw/gog-client.json
+docker compose run --rm openclaw-deploy exec openclaw-gateway \
+  gog auth add you@gmail.com --services gmail,calendar,drive --remote --step 1
+# Open the printed URL on your computer, consent, then copy the complete redirect URL.
+docker compose run --rm openclaw-deploy exec openclaw-gateway \
+  gog auth add you@gmail.com --services gmail,calendar,drive --remote --step 2 \
+    --auth-url 'PASTE_COMPLETE_REDIRECT_URL'
+docker compose run --rm openclaw-deploy exec openclaw-gateway \
+  gog --no-input --json auth doctor --check
+```
+
+Both remote steps must use the same `GOG_HOME` and OAuth client. This flow needs
+no additional published callback port. `auth doctor` returns a diagnostic report;
+inspect its status/checks, since exit code 0 alone does not mean auth is healthy.
+External OAuth apps left in Google's Testing mode can require reauthorization
+after seven days; follow the quickstart's production-mode guidance for persistent
+personal use. See the [remote auth flags](https://gogcli.sh/commands/gog-auth-add.html)
+and [headless authentication guide](https://gogcli.sh/install.html).
+
+To let sandboxed agents use this same login, merge the following into your
+deployed OpenClaw config. Replace the bind source with your actual data base;
+it must be visible at that path to DinD and the gateway. Gateway environment
+variables are not automatically forwarded to sandboxes:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "docker": {
+          "binds": ["/mnt/cache/appdata/openclaw/gog:/gog:rw"],
+          "dangerouslyAllowExternalBindSources": true,
+          "env": {
+            "GOG_HOME": "/gog",
+            "GOG_KEYRING_BACKEND": "file",
+            "GOG_KEYRING_PASSWORD": "${GOG_KEYRING_PASSWORD}"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The external-bind opt-in is required because this credential directory is outside
+the agent workspace. Mount only the intended credential directory, as described
+in OpenClaw's [bind mount configuration](https://docs.openclaw.ai/gateway/sandboxing/multiple-folders-for-one-agent).
+
+Restart the gateway and recreate existing sandboxes after changing their mounts
+or environment, using the maintenance procedure above. The shared store means
+authorization in the gateway is also usable in those sandboxes without another
+Google login. For separate agent identities or grants, give each agent a separate
+persistent directory and keyring password through its per-agent sandbox settings.
+`GOG_ACCOUNT` selects an account; it does not restrict access to other accounts in
+the same keyring. Sandbox API calls also need outbound HTTPS access.
+
 ## MCP configuration
 
 Each image has its own readable defaults at `/etc/mcporter/mcporter.json`.
@@ -423,7 +510,8 @@ deployment still uses Playwright in the sandbox and leaves this browser sidecar
 disabled; publishing the image does not enable it in an existing configuration.
 
 The mise base, MCP package versions, Docker CLI image, and uv image are pinned.
-Node and uv downloads are locked with checksums in `sandbox/mise.lock`. Updating those tools
+Sandbox Node, uv, and gh downloads, plus gog for both images, are locked with
+checksums in `sandbox/mise.lock`. Updating those tools
 requires a reviewed version or lockfile change. Keep uv's version in
 `sandbox/mise.toml` and the gateway's uv image reference in sync, including the
 image digest.

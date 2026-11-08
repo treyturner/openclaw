@@ -36,6 +36,21 @@ url = "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknow
 url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/664336023"
 provenance = "github-attestations"
 
+[[tools."github:openclaw/gogcli"]]
+version = "0.48.0"
+backend = "github:openclaw/gogcli"
+specifiers = ["0.48"]
+
+[tools."github:openclaw/gogcli"."platforms.linux-arm64"]
+checksum = "sha256:fc40524368d2cb6213bdfe0b736b5884e1b55c6368706d7a285542cb7e559b68"
+url = "https://github.com/openclaw/gogcli/releases/download/v0.48.0/gogcli_0.48.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/openclaw/gogcli/releases/assets/714816419"
+
+[tools."github:openclaw/gogcli"."platforms.linux-x64"]
+checksum = "sha256:8809d2f4fe95a0299b1a2a5c6bc912c4aba4b90a7b5e2c1f5cf11b9945a50004"
+url = "https://github.com/openclaw/gogcli/releases/download/v0.48.0/gogcli_0.48.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/openclaw/gogcli/releases/assets/714816349"
+
 [[tools.node]]
 version = "26.12.1"
 backend = "core:node"
