@@ -120,6 +120,11 @@ COPY --chmod=0644 config/mcporter.gateway.json /etc/mcporter/mcporter.json
 ENV MCPORTER_CONFIG=/etc/mcporter/mcporter.json \
     MCPORTER_OAUTH_NO_BROWSER=1
 
+# Copy 1password connect resolver for gateway SecretRefs
+COPY --chown=node:node --chmod=0500 \
+    scripts/connect-resolver.cjs \
+    /opt/openclaw/bin/connect-resolver.cjs
+
 # switch to runtime user
 USER node
 

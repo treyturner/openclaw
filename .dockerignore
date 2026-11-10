@@ -4,5 +4,6 @@
 !config/mcporter.sandbox.json
 !sandbox/mise.toml
 !sandbox/mise.lock
+!scripts/connect-resolver.cjs
 !scripts/install-shared-clis.sh
 !scripts/whisper
