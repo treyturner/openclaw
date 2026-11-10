@@ -9,6 +9,7 @@ from textwrap import dedent
 import unittest
 
 ACTION = Path(__file__).resolve().parents[1] / '.github/actions/resolve/base/action.yml'
+UPSTREAM_VERSION = (Path(__file__).resolve().parents[1] / '.github/openclaw-version').read_text().strip()
 # The action ends with one literal run block. Execute that exact inline body,
 # with the same Bash options as Actions, without adding a YAML test dependency.
 RESOLVER = dedent(ACTION.read_text().split('      run: |\n', 1)[1])
@@ -18,7 +19,7 @@ DOCKERFILE = f'FROM debian:bookworm-slim@{PIN}\nLABEL org.openclaw.sandbox-brows
 
 
 class ResolveBase(unittest.TestCase):
-    def resolve(self, role='', ref='', *, dockerfile=DOCKERFILE, release='2026.11.1', digest=LATEST):
+    def resolve(self, role='', ref='', *, dockerfile=DOCKERFILE, release=UPSTREAM_VERSION, digest=LATEST):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / '.github').mkdir()
@@ -66,8 +67,8 @@ elif args[0] != 'pull':
     def test_gateway_uses_shared_release(self):
         result, outputs, calls = self.resolve('gateway')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(outputs['base_ref'], 'ghcr.io/openclaw/openclaw:2026.11.1@' + LATEST)
-        self.assertEqual(calls[0][4], 'ghcr.io/openclaw/openclaw:2026.11.1')
+        self.assertEqual(outputs['base_ref'], f'ghcr.io/openclaw/openclaw:{UPSTREAM_VERSION}@{LATEST}')
+        self.assertEqual(calls[0][4], f'ghcr.io/openclaw/openclaw:{UPSTREAM_VERSION}')
 
     def test_browser_preserves_release_pin_and_contract(self):
         result, outputs, calls = self.resolve('sandbox-browser')
@@ -75,9 +76,9 @@ elif args[0] != 'pull':
         self.assertEqual(outputs['base_ref'], 'debian:bookworm-slim@' + PIN)
         self.assertEqual(outputs['digest'], PIN)
         self.assertEqual(outputs['short_digest'], 'a' * 12)
-        self.assertEqual(outputs['version'], '2026.11.1')
+        self.assertEqual(outputs['version'], UPSTREAM_VERSION)
         self.assertEqual(outputs['browser_contract'], 'test-contract')
-        self.assertIn('/v2026.11.1/', calls[0][4])
+        self.assertIn(f'/v{UPSTREAM_VERSION}/', calls[0][4])
         self.assertFalse(any('imagetools' in call for call in calls))
 
     def test_rejects_missing_unpinned_and_ambiguous_browser_metadata(self):
