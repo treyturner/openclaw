@@ -1,0 +1,42 @@
+name: Build PR candidate
+description: Resolve the base and load an image built from the pull request into Docker
+
+inputs:
+  role:
+    description: Image role to build
+    required: true
+  upstream-ref:
+    description: Upstream base tag for the sandbox image
+    required: false
+  cache-ref:
+    description: Registry cache reference
+    required: true
+  candidate-ref:
+    description: Local tag for the loaded candidate image
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve base
+      id: base
+      uses: ./.github/actions/resolve/base
+      with:
+        image-role: ${{ inputs.role }}
+        upstream-image-ref: ${{ inputs.upstream-ref }}
+
+    - name: Build candidate
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+      with:
+        context: .
+        file: Dockerfile.${{ inputs.role }}
+        build-args: |
+          BASE_REF=${{ steps.base.outputs.base_ref }}
+          UPSTREAM_TAG=${{ steps.base.outputs.upstream_version }}
+          BROWSER_CONTRACT=${{ steps.base.outputs.browser_contract }}
+        pull: true
+        no-cache-filters: ${{ inputs.role }}
+        cache-from: type=registry,ref=${{ inputs.cache-ref }}
+        tags: ${{ inputs.candidate-ref }}
+        load: true
+        push: false
