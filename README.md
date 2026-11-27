@@ -519,6 +519,14 @@ base digest and browser contract label. The browser entrypoint is downloaded fro
 the same OpenClaw release during the image build; no local copy is required in
 the Docker context. Update the one version file when upgrading OpenClaw.
 
+The release update workflow checks for a newer stable release daily at 07:30 UTC,
+30 minutes before the scheduled build. It opens a PR that updates only the pin
+and rebases and merges it after the PR checks pass. To enable it, add a repository
+Actions secret named `OPENCLAW_RELEASE_TOKEN` containing a fine-grained personal
+access token scoped to this repository with **Contents** and **Pull requests**
+set to **Read and write**. This token lets the PR and publishing workflows run
+automatically when the updater opens and merges the PR.
+
 The browser image runs upstream's Chromium, authenticated CDP relay, Xvfb, VNC,
 and noVNC stack. Its smoke test starts the real command as UID 1000 with a
 read-only root and no external network, checks that CDP rejects unauthenticated
