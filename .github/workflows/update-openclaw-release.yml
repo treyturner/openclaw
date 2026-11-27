@@ -1,0 +1,142 @@
+name: Update OpenClaw release
+
+on:
+  schedule:
+    # 30 minutes before the daily build at 08:00 UTC.
+    - cron: "30 7 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+  statuses: read
+
+concurrency:
+  group: update-openclaw-release
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VERSION_FILE: .github/openclaw-version
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Find a newer stable release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current=$(cat "$VERSION_FILE")
+          tag=$(gh api repos/openclaw/openclaw/releases/latest --jq .tag_name)
+          release=${tag#v}
+          version_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ "$tag" != v* || ! "$release" =~ $version_pattern || ! "$current" =~ $version_pattern ]]; then
+            echo '::error::Expected numeric OpenClaw release versions.'
+            exit 1
+          fi
+
+          if [[ "$release" == "$current" || $(printf '%s\n' "$current" "$release" | sort -V | tail -n 1) != "$release" ]]; then
+            echo "Pinned version $current is current or newer than the latest stable release ($release)."
+            exit 0
+          fi
+          echo "version=$release" >> "$GITHUB_OUTPUT"
+
+      - name: Open or reuse the release pull request
+        id: pr
+        if: steps.release.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ secrets.OPENCLAW_RELEASE_TOKEN }}
+          RELEASE: ${{ steps.release.outputs.version }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo '::error::Set the OPENCLAW_RELEASE_TOKEN repository Actions secret.'
+            exit 1
+          fi
+
+          branch="ci/openclaw-$RELEASE"
+          remote_ref="refs/remotes/origin/$branch"
+          title="Update OpenClaw to $RELEASE"
+          pulls="repos/$GITHUB_REPOSITORY/pulls"
+          pr=$(gh api --method GET "$pulls" -f state=all -f base=main \
+            -f head="${GITHUB_REPOSITORY_OWNER}:$branch" --jq '.[0] // empty')
+          if [[ -n "$pr" && $(jq -r .state <<< "$pr") != open ]]; then
+            echo "The release pull request for $RELEASE has already been closed."
+            exit 0
+          fi
+
+          if git show-ref --verify --quiet "$remote_ref"; then
+            # A prior run may have pushed the branch before opening its PR.
+            if [[ $(git rev-list --count "HEAD..$remote_ref") != 1 ||
+                  $(git diff --name-only "HEAD...$remote_ref") != "$VERSION_FILE" ]] ||
+                ! git show "$remote_ref:$VERSION_FILE" | cmp -s - <(printf '%s\n' "$RELEASE"); then
+              echo "::error::Unexpected changes on $branch."
+              exit 1
+            fi
+            head_sha=$(git rev-parse "$remote_ref")
+          else
+            printf '%s\n' "$RELEASE" > "$VERSION_FILE"
+            git add -- "$VERSION_FILE"
+            git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "$title"
+            head_sha=$(git rev-parse HEAD)
+            gh auth setup-git
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+
+          if [[ -z "$pr" ]]; then
+            number=$(gh api --method POST "$pulls" -f base=main -f head="$branch" -f title="$title" \
+              -f body="Bump the version pin to the [upstream release](https://github.com/openclaw/openclaw/releases/tag/v$RELEASE)." \
+              --jq .number)
+          else
+            number=$(jq -r .number <<< "$pr")
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the pull request checks
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          HEAD_SHA: ${{ steps.pr.outputs.sha }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          # Require the PR build workflow for this commit even if no checks have appeared yet.
+          while true; do
+            run=$(gh run list --workflow pull-request.yml --event pull_request \
+              --branch "$BRANCH" --commit "$HEAD_SHA" --limit 1 \
+              --json status,conclusion,url --jq '.[0] // empty')
+            if [[ -n "$run" && $(jq -r .status <<< "$run") == completed ]]; then
+              echo "PR build: $(jq -r .url <<< "$run")"
+              if [[ $(jq -r .conclusion <<< "$run") != success ]]; then
+                echo '::error::The pull request build did not pass.'
+                exit 1
+              fi
+              break
+            fi
+            sleep 30
+          done
+
+          gh pr checks "$PR_NUMBER" --watch --interval 30 --fail-fast
+
+      - name: Rebase and merge the checked commit
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.OPENCLAW_RELEASE_TOKEN }}
+          HEAD_SHA: ${{ steps.pr.outputs.sha }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
+            -f merge_method=rebase -f sha="$HEAD_SHA" --jq .message
