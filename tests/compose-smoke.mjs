@@ -46,7 +46,8 @@ try {
   const config = JSON.parse(await readFile(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
   config.models = { providers: { fixture: {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'local-fixture-only', api: 'openai-completions',
-    models: [{ id: 'fixture-model', name: 'Fixture', reasoning: false, input: ['text'], contextWindow: 16384, maxTokens: 1024 }],
+    // Allow room for OpenClaw's system prompt, tool schemas and the tool result.
+    models: [{ id: 'fixture-model', name: 'Fixture', reasoning: false, input: ['text'], contextWindow: 65536, maxTokens: 1024 }],
   } } };
   config.agents.defaults.model = { primary: 'fixture/fixture-model' };
   config.agents.defaults.models = { 'fixture/fixture-model': {} };
